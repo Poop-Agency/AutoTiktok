@@ -263,39 +263,68 @@ def _default_lister(root: Path, settings: dict) -> BrowserLister | None:
     )
 
 
+def select_accounts(pool: list[str], index: dict, *, only_new: bool = False, account: str | None = None) -> list[str]:
+    """Usernames to list: the whole pool, only the accounts the index has never seen, or a single one."""
+    usernames = [username_of(profile) for profile in pool]
+    if account:
+        wanted = username_of(account).lower() if "/" in account else account.lstrip("@").lower()
+        matches = [u for u in usernames if u.lower() == wanted]
+        if not matches:
+            raise FetchError(f"{wanted} n'est pas dans le pool (account_pools.txt).")
+        return matches[:1]
+    if only_new:
+        known = set(index.get("accounts", {})) | {e.get("account") for e in index["reels"].values()}
+        return [u for u in usernames if u not in known]
+    return usernames
+
+
 def refresh_index(
     root: Path,
     config: dict,
     *,
+    only_new: bool = False,
+    account: str | None = None,
+    min_views: int | None = None,
     lister: BrowserLister | None = None,
 ) -> int:
-    """List every Reel above ``min_views`` of every pool account into the index file.
+    """List the Reels above ``min_views`` of the pool accounts into the index file.
 
-    Returns 0 when every account was read, 1 when something went wrong (what was found is kept).
+    ``only_new`` keeps the accounts the index has never listed, ``account`` a single one, and ``min_views``
+    replaces ``fetch.min_views`` for this run. Returns 0 when every account was read, 1 when something went
+    wrong (what was found is kept).
     """
     root = Path(root)
     settings = config["fetch"]
+    threshold = settings["min_views"] if min_views is None else min_views
     pool = read_pool(root / settings["pool_file"])
     if not pool:
         _log(f"Aucun compte dans {settings['pool_file']}.")
         return 1
+
+    index_path = root / settings["index_file"]
+    index = load_index(index_path)
+    try:
+        usernames = select_accounts(pool, index, only_new=only_new, account=account)
+    except FetchError as exc:
+        _log(str(exc))
+        return 1
+    if not usernames:
+        _log("Aucun nouveau compte à lister : tous les comptes du pool sont déjà dans l'index.")
+        return 0
     lister = lister or _default_lister(root, settings)
     if lister is None:
         return 1
 
-    index_path = root / settings["index_file"]
-    index = load_index(index_path)
     failures = 0
     with lister:
-        for profile in pool:
-            username = username_of(profile)
+        for username in usernames:
             _log(f"Compte : {username}")
             kept = read = 0
             try:
                 for batch in lister.reels(username):
                     read += len(batch)
                     for reel in batch:
-                        if reel["views"] < settings["min_views"]:
+                        if reel["views"] < threshold:
                             continue
                         kept += 1
                         entry = index["reels"].setdefault(reel["id"], {"first_seen": now_iso()})
@@ -316,7 +345,12 @@ def refresh_index(
                 failures += 1
                 _log(f"  ignoré : {exc}")
             else:
-                _log(f"  {read} Reel(s) lus, {kept} à plus de {settings['min_views']} vues.")
+                index.setdefault("accounts", {})[username] = {
+                    "listed_at": now_iso(),
+                    "min_views": threshold,
+                    "reels_read": read,
+                }
+                _log(f"  {read} Reel(s) lus, {kept} à plus de {threshold} vues.")
             save_index(index_path, index)
     _log(f"Index : {len(index['reels'])} Reel(s) dans {settings['index_file']}.")
     return 1 if failures else 0

@@ -165,6 +165,11 @@ Deux commandes, qui se partagent un index (`state/index.json`) :
    mais des pauses de quelques secondes entre les requêtes (`fetch.request_delay`) : compte une dizaine de minutes pour quelques comptes.
    À relancer à la main de temps en temps, pour rattraper les Reels qui passent la barre du million. Un 429 d'Instagram
    arrête proprement la commande : ce qui est déjà trouvé est gardé.
+   Options :
+   - `--new` : seulement les comptes que l'index n'a jamais listés (pratique quand tu ajoutes des comptes à `account_pools.txt`) ;
+   - `--account NOM` : seulement ce compte (nom ou URL du profil, il doit être dans le pool) ;
+   - `--min-views N` : seuil de vues pour cette fois, à la place de `fetch.min_views` (par exemple `--min-views 100000`).
+     Baisser le seuil ne retrouve pas les Reels des comptes déjà listés : relance-les avec `--account NOM --min-views N`.
 2. **`python -m autotiktok post-next`** tire dans l'index un Reel jamais pris, le télécharge dans `input/` avec sa légende,
    le publie sur les comptes connectés (comme `publish-next`), supprime le fichier et l'ajoute à l'archive.
    Les URLs déjà prises sont dans `state/fetched.jsonl` : un Reel n'est jamais repris. `--dry-run` affiche le choix sans rien faire.

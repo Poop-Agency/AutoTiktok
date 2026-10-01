@@ -284,3 +284,57 @@ def test_post_next_dry_run_touches_nothing(project, config, publishing):
 
 def test_rate_limited_is_a_fetch_error():
     assert issubclass(RateLimited, FetchError)
+
+
+def pool_of(project, *names):
+    (project / "account_pools.txt").write_text(
+        "".join(f"https://www.instagram.com/{n}/\n" for n in names), encoding="utf-8"
+    )
+
+
+class RecordingLister(FakeLister):
+    def __init__(self, pages):
+        super().__init__(pages)
+        self.asked = []
+
+    def reels(self, username):
+        self.asked.append(username)
+        return super().reels(username)
+
+
+def test_refresh_index_new_only_lists_unknown_accounts(project, config):
+    pool_of(project, "a", "b", "c")
+    write_index(project, config, {"x": entry("x", account="a")})
+    lister = RecordingLister({"b": [[reel("b1", 2_000_000)]], "c": [[reel("c1", 10)]]})
+    assert refresh_index(project, config, only_new=True, lister=lister) == 0
+    assert lister.asked == ["b", "c"]
+    # "c" had nothing above the threshold but is remembered, so it is not listed again.
+    again = RecordingLister({})
+    assert refresh_index(project, config, only_new=True, lister=again) == 0
+    assert again.asked == []
+
+
+def test_refresh_index_single_account(project, config):
+    pool_of(project, "a", "b")
+    lister = RecordingLister({"b": [[reel("b1", 2_000_000)]]})
+    assert refresh_index(project, config, account="https://www.instagram.com/b/", lister=lister) == 0
+    assert lister.asked == ["b"]
+    lister = RecordingLister({"a": [[reel("a1", 2_000_000)]]})
+    assert refresh_index(project, config, account="@A", lister=lister) == 0
+    assert lister.asked == ["a"]
+
+
+def test_refresh_index_account_must_be_in_pool(project, config):
+    pool_of(project, "a")
+    lister = RecordingLister({})
+    assert refresh_index(project, config, account="stranger", lister=lister) == 1
+    assert lister.asked == []
+
+
+def test_refresh_index_min_views_override(project, config):
+    pool_of(project, "a")
+    lister = RecordingLister({"a": [[reel("small", 150_000), reel("tiny", 99_999)]]})
+    assert refresh_index(project, config, min_views=100_000, lister=lister) == 0
+    index = load_index(project / config["fetch"]["index_file"])
+    assert set(index["reels"]) == {"small"}
+    assert index["accounts"]["a"]["min_views"] == 100_000
