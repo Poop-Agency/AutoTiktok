@@ -1,11 +1,12 @@
 name: Publier une vidéo
 
+# La publication tourne sur le serveur (crontab + scripts/run.sh). Ce workflow ne se lance qu'à la main.
+# Pour publier depuis GitHub à la place du serveur, décommente le bloc schedule, mais jamais les deux
+# en même temps, sinon chaque vidéo partirait deux fois.
 on:
-  schedule:
-    # Heures en UTC. 10:47 et 17:47 UTC = 12:47 / 19:47 à Paris l'été, 11:47 / 18:47 l'hiver.
-    # Pour une seule vidéo par jour, supprime une des deux lignes.
-    - cron: "47 10 * * *"
-    - cron: "47 17 * * *"
+  # schedule:
+  #   - cron: "47 10 * * *"
+  #   - cron: "47 17 * * *"
   workflow_dispatch:
     inputs:
       dry_run:

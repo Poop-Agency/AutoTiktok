@@ -28,7 +28,13 @@ DEFAULTS: dict = {
         "made_for_kids": False,
         "tags": ["funny", "humour", "shorts"],
     },
-    "queue": {"input_dir": "input", "done_dir": "done", "after_publish": "move", "max_attempts": 3},
+    "queue": {
+        "input_dir": "input",
+        "done_dir": "done",
+        "order": "alphabetical",
+        "after_publish": "move",
+        "max_attempts": 3,
+    },
 }
 
 
@@ -60,6 +66,8 @@ def load_config(path: Path) -> dict:
         raise ConfigError("youtube.privacy doit valoir 'public', 'unlisted' ou 'private'.")
     if config["queue"]["after_publish"] not in ("move", "delete"):
         raise ConfigError("queue.after_publish doit valoir 'move' ou 'delete'.")
+    if config["queue"]["order"] not in ("alphabetical", "random"):
+        raise ConfigError("queue.order doit valoir 'alphabetical' ou 'random'.")
     unknown = set(config["platforms"]) - set(PLATFORMS)
     if unknown:
         raise ConfigError(f"Plateformes inconnues dans 'platforms' : {', '.join(sorted(unknown))}.")

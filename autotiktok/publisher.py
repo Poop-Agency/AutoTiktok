@@ -1,4 +1,4 @@
-"""``publish-next``: publish the oldest queued video on every enabled platform."""
+"""``publish-next``: publish the next queued video on every enabled platform."""
 
 from __future__ import annotations
 
@@ -12,11 +12,12 @@ import httpx
 from .config import enabled_platforms
 from .platforms import PUBLISHERS
 from .platforms.base import HTTP_TIMEOUT, PublishError, RetryableError, Video
-from .queue import FAILED, State, caption_for, finish_video, list_videos
+from .queue import FAILED, Archive, State, caption_for, file_sha256, finish_video, list_videos, pick_video
 from .tokens import TokenStore, key_from_env
 
 STATE_FILE = Path("state/published.json")
 TOKENS_FILE = Path("state/tokens.enc")
+ARCHIVE_FILE = Path("state/archive.jsonl")
 
 # Secrets each platform needs at publish time (Instagram only needs its token).
 REQUIRED_ENV = {
@@ -33,7 +34,9 @@ def missing_setup(platforms: list[str], store: TokenStore, env: Mapping[str, str
             problems.append(f"{platform} : compte non connecté (`python -m autotiktok auth {platform}`)")
         missing = [name for name in REQUIRED_ENV[platform] if not env.get(name)]
         if missing:
-            problems.append(f"{platform} : secret(s) GitHub manquant(s) : {', '.join(missing)}")
+            problems.append(
+                f"{platform} : variable(s) manquante(s) (secrets GitHub ou fichier .env) : {', '.join(missing)}"
+            )
     return problems
 
 
@@ -98,12 +101,25 @@ def publish_next(
                 refresh_errors[platform] = exc
                 _log(f"[{platform}] ERREUR jeton : {exc}")
 
-        if not videos:
+        archive = Archive(root / ARCHIVE_FILE)
+        video_path = None
+        while videos:
+            candidate = pick_video(videos, state, config["queue"]["order"])
+            sha256 = file_sha256(candidate)
+            if archive.contains(sha256) and candidate.name not in state.data["videos"]:
+                disposition = finish_video(candidate, config, root)
+                _log(f"{candidate.name} a déjà été publiée (même fichier dans l'archive) : ignorée ({disposition}).")
+                videos.remove(candidate)
+                continue
+            video_path = candidate
+            break
+
+        if video_path is None:
             _log("File d'attente vide : ajoute des vidéos dans input/.")
             return 1 if refresh_errors else 0
 
-        video_path = videos[0]
         name = video_path.name
+        state.start(name, sha256)
         caption = caption_for(video_path, config)
         max_attempts = int(config["queue"]["max_attempts"])
         _log(f"Vidéo : {name} ({video_path.stat().st_size / 1e6:.1f} Mo) – légende : {caption!r}")
@@ -138,9 +154,9 @@ def publish_next(
                     store.save()
 
         if all(state.is_final(name, p) for p in platforms):
-            disposition = finish_video(video_path, config, root)
-            state.mark_done(name, disposition)
             failed = [p for p in platforms if state.platform(name, p).get("status") == FAILED]
+            disposition = finish_video(video_path, config, root)
+            archive.add(state.pop_done(name, disposition))
             suffix = f" (abandonné sur : {', '.join(failed)})" if failed else ""
             _log(f"{name} terminé, fichier {'déplacé' if disposition == 'moved' else 'supprimé'}{suffix}.")
         else:
@@ -156,9 +172,12 @@ def _dry_run(videos: list[Path], platforms: list[str], state: State, config: dic
     if not videos:
         _log("File d'attente vide.")
         return 0
-    video = videos[0]
+    video = pick_video(videos, state, config["queue"]["order"])
     todo = [p for p in platforms if not state.is_final(video.name, p)]
-    _log(f"Prochaine vidéo : {video.name}")
+    order = (
+        " (tirée au hasard, le vrai passage peut en choisir une autre)" if config["queue"]["order"] == "random" else ""
+    )
+    _log(f"Prochaine vidéo : {video.name}{order}")
     _log(f"Légende : {caption_for(video, config)!r}")
     _log(f"Plateformes à publier : {', '.join(todo) or 'aucune'}")
     _log(f"Vidéos en attente : {len(videos)}")
@@ -175,12 +194,9 @@ def status(root: Path, config: dict) -> None:
         _log(f"  {video.name} : {summary}")
     if len(videos) > 10:
         _log(f"  … et {len(videos) - 10} autre(s)")
-    recent = sorted(
-        ((n, v) for n, v in state.data["videos"].items() if v.get("done_at")),
-        key=lambda item: item[1]["done_at"],
-    )[-5:]
+    recent = Archive(Path(root) / ARCHIVE_FILE).entries[-5:]
     if recent:
         _log("Dernières vidéos terminées :")
-        for name, entry in recent:
-            summary = ", ".join(f"{p}={e.get('status')}" for p, e in entry["platforms"].items())
-            _log(f"  {entry['done_at']} {name} : {summary}")
+        for entry in recent:
+            summary = ", ".join(f"{p}={e.get('status')}" for p, e in entry.get("platforms", {}).items())
+            _log(f"  {entry['done_at']} {entry['name']} : {summary}")

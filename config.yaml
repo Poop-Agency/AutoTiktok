@@ -35,5 +35,6 @@ youtube:
 queue:
   input_dir: input
   done_dir: done
-  after_publish: move        # move : déplace vers done/ ; delete : supprime la vidéo une fois publiée
+  order: random              # random : vidéo tirée au hasard ; alphabetical : par ordre de nom
+  after_publish: delete      # delete : supprime la vidéo une fois publiée ; move : la déplace vers done/
   max_attempts: 3            # au bout de 3 échecs sur une plateforme, on passe à la vidéo suivante

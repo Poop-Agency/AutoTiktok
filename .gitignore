@@ -4,3 +4,10 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .env
+logs/
+# Données propres au serveur : les vidéos, l'état et les jetons ne vont pas dans git.
+input/*
+!input/.gitkeep
+done/
+state/*
+!state/.gitkeep

@@ -16,6 +16,18 @@ from .publisher import TOKENS_FILE, publish_next, status
 from .tokens import TokenStore, TokenStoreError, generate_key, key_from_env
 
 
+def load_env_file(path: Path) -> None:
+    """Load ``KEY=VALUE`` lines into the environment (used on a server instead of GitHub Secrets)."""
+    if not path.is_file():
+        return
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.removeprefix("export ").split("=", 1)
+        os.environ.setdefault(key.strip(), value.strip().strip("\"'"))
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="autotiktok", description=__doc__)
     parser.add_argument("--root", default=".", help="dossier du projet (défaut : dossier courant)")
@@ -31,6 +43,7 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
     root = Path(args.root)
+    load_env_file(root / ".env")
 
     if args.command == "keygen":
         print(generate_key())

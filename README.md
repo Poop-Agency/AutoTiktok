@@ -1,14 +1,20 @@
 # AutoTiktok
 
 Publie automatiquement tes vidéos, déjà prêtes, sur **TikTok**, **Instagram Reels** et **YouTube Shorts**,
-une ou deux fois par jour. Pas de serveur ni d'abonnement : tout tourne gratuitement sur GitHub Actions et
-passe par les **API officielles** des plateformes. Tes comptes ne risquent donc pas d'être bannis.
+une ou deux fois par jour, depuis ton serveur (cron). Tout passe par les **API officielles** des plateformes :
+pas d'abonnement, et pas de risque de bannissement lié à un faux navigateur.
 
 ```
-input/001.mp4  ──►  12h47 : TikTok + Instagram + YouTube  ──►  done/001.mp4
-input/002.mp4  ──►  19h47 : TikTok + Instagram + YouTube  ──►  done/002.mp4
-input/003.mp4  ──►  le lendemain 12h47…
+input/  ──►  12h47 : une vidéo tirée au hasard → TikTok + Instagram + YouTube → supprimée + notée dans l'archive
+        ──►  19h47 : une autre vidéo au hasard…
 ```
+
+- **Tirage au hasard** parmi les vidéos de `input/`. Une vidéo dont une publication a échoué est retentée en priorité.
+- **Suppression** de la vidéo une fois traitée (`after_publish: delete`).
+- **Archive anti-doublon** (`state/archive.jsonl`) : chaque vidéo publiée y est notée avec l'empreinte de son contenu (SHA-256).
+  Si le même fichier revient dans `input/`, même sous un autre nom, il est ignoré.
+
+Les vidéos de `input/` doivent être les tiennes, ou des vidéos que tu as le droit de publier.
 
 ## Ce qui est automatique
 
@@ -24,34 +30,34 @@ Ces audits ne concernent que la publication **par API**, c'est-à-dire par un pr
 
 ## Mise en place (une seule fois, ~1 h)
 
-Il te faut Python 3.11 ou plus récent sur ton ordinateur, et le repo cloné.
-[GitHub Desktop](https://desktop.github.com/) est le plus simple pour cloner.
+La connexion des comptes ouvre un navigateur, donc elle se fait **sur ton ordinateur**.
+Ensuite, tu copies le fichier de jetons chiffrés sur le serveur.
+
+### 1. Installer (ordinateur et serveur)
+
+Il faut Python 3.11 ou plus récent.
 
 ```bash
+git clone https://github.com/Poop-Agency/AutoTiktok.git
 cd AutoTiktok
-python -m pip install -r requirements.txt
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+cp .env.example .env && chmod 600 .env
 ```
 
-### 1. Clé de chiffrement
+Les valeurs du fichier `.env` sont lues automatiquement par toutes les commandes. Remplis-le sur l'ordinateur comme sur le serveur.
+
+### 2. Clé de chiffrement
 
 Les jetons d'accès à tes comptes sont stockés **chiffrés** dans `state/tokens.enc`. Génère une clé :
 
 ```bash
-python -m autotiktok keygen
+.venv/bin/python -m autotiktok keygen
 ```
 
-- Copie la clé dans GitHub : repo → **Settings → Secrets and variables → Actions → New repository secret**,
-  nom `TOKENS_KEY`.
-- Garde-la aussi dans un endroit sûr (gestionnaire de mots de passe). Elle sert pour les commandes `auth` ci-dessous.
+Mets-la dans `TOKENS_KEY=` des deux fichiers `.env`. Garde-la aussi dans un gestionnaire de mots de passe.
 
-Dans le terminal où tu lanceras les commandes `auth` :
-
-```bash
-export TOKENS_KEY="la-clé"            # macOS / Linux
-$env:TOKENS_KEY="la-clé"              # Windows PowerShell
-```
-
-### 2. Instagram
+### 3. Instagram
 
 1. Dans l'appli Instagram, passe ton compte en **compte professionnel** (Créateur ou Entreprise) :
    Paramètres → Type de compte et outils.
@@ -63,13 +69,13 @@ $env:TOKENS_KEY="la-clé"              # Windows PowerShell
    Les permissions `instagram_business_basic` et `instagram_business_content_publish` doivent être cochées.
 5. Lance cette commande avec le jeton :
    ```bash
-   python -m autotiktok auth instagram --token "LE_JETON"
+   .venv/bin/python -m autotiktok auth instagram --token "LE_JETON"
    ```
 
 L'app peut rester en **mode développement** : c'est suffisant pour publier sur ton propre compte.
 Le jeton est valable 60 jours et il est renouvelé automatiquement à chaque passage.
 
-### 3. YouTube
+### 4. YouTube
 
 1. Sur [console.cloud.google.com](https://console.cloud.google.com/), crée un projet.
    Dans **API et services → Bibliothèque**, active **YouTube Data API v3**.
@@ -80,46 +86,60 @@ Le jeton est valable 60 jours et il est renouvelé automatiquement à chaque pas
    - clique sur **Publier l'application** pour passer « En production ». Une validation Google n'est pas nécessaire pour ton usage perso.
      ⚠️ Si tu restes en mode « Test », la connexion expire au bout de 7 jours.
 3. Dans **Identifiants → Créer des identifiants → ID client OAuth**, choisis le type **Application de bureau**.
-4. Ajoute ces deux valeurs aux secrets GitHub, sous les noms `GOOGLE_CLIENT_ID` et `GOOGLE_CLIENT_SECRET`.
-   Exporte-les aussi dans ton terminal, comme `TOKENS_KEY`.
+4. Mets les deux valeurs dans `GOOGLE_CLIENT_ID` et `GOOGLE_CLIENT_SECRET` des deux fichiers `.env`.
 5. Lance :
    ```bash
-   python -m autotiktok auth youtube
+   .venv/bin/python -m autotiktok auth youtube
    ```
    Le navigateur s'ouvre et Google affiche « Application non validée » : clique sur **Paramètres avancés → Accéder à … (non sécurisé)**.
    C'est normal, c'est ta propre app.
 
-### 4. TikTok
+### 5. TikTok
 
 1. Sur [developers.tiktok.com](https://developers.tiktok.com/), va dans **Manage apps → Connect an app**.
 2. Ajoute les produits **Login Kit** et **Content Posting API**.
 3. Dans Login Kit, choisis la plateforme **Desktop** et ajoute l'URL de redirection `http://localhost:8765/callback/`.
 4. Passe en **Sandbox** et ajoute ton compte TikTok comme **Target user**.
    Ça permet d'utiliser l'API sans attendre la validation de l'app.
-5. Ajoute le *Client key* et le *Client secret* aux secrets GitHub, sous les noms `TIKTOK_CLIENT_KEY` et `TIKTOK_CLIENT_SECRET`.
-   Exporte-les aussi dans ton terminal.
+5. Mets le *Client key* et le *Client secret* dans `TIKTOK_CLIENT_KEY` et `TIKTOK_CLIENT_SECRET` des deux fichiers `.env`.
 6. Lance :
    ```bash
-   python -m autotiktok auth tiktok
+   .venv/bin/python -m autotiktok auth tiktok
    ```
 
 Si le mode Sandbox ne suffit pas (par exemple si la connexion échoue), soumets l'app à la validation de TikTok
 (*Submit for review*) avec la page décrite dans [Audit TikTok](#audit-tiktok).
 
-### 5. Activer
+### 6. Copier les jetons sur le serveur et lancer le cron
 
 ```bash
-git add state/tokens.enc
-git commit -m "Connexion des comptes"
-git push
+scp state/tokens.enc utilisateur@serveur:AutoTiktok/state/tokens.enc
 ```
 
-- Le planning ne tourne que sur la **branche principale** (`main`) du repo.
-- Pour tester, va dans l'onglet **Actions → Publier une vidéo → Run workflow** :
-  - coche « Simulation » pour voir ce qui serait publié, sans rien envoyer ;
-  - décoche-la pour publier réellement.
-- Une plateforme que tu ne veux pas utiliser se désactive dans `config.yaml` (`platforms: youtube: false`).
+Sur le serveur, fais d'abord un essai sans rien envoyer :
+
+```bash
+.venv/bin/python -m autotiktok publish-next --dry-run
+```
+
+Puis ajoute le passage automatique avec `crontab -e` :
+
+```
+47 12,19 * * * /home/utilisateur/AutoTiktok/scripts/run.sh
+```
+
+- **Fuseau horaire :** les heures suivent celui du serveur. Pour être à l'heure de Paris :
+  `sudo timedatectl set-timezone Europe/Paris`.
+- **Fréquence :** pour une seule vidéo par jour, garde une seule heure (`47 12 * * *`).
+- **Le script `scripts/run.sh` :**
+  - empêche deux passages en même temps ;
+  - écrit tout dans `logs/AAAA-MM.log` ;
+  - utilise `.venv/bin/python`, ou le Python indiqué par la variable `AUTOTIKTOK_PYTHON`.
+- **Plateforme non connectée :** une plateforme que tu ne veux pas utiliser se désactive dans `config.yaml` (`platforms: youtube: false`).
   Tant qu'une plateforme activée n'est pas connectée, **aucune vidéo n'est publiée**. Comme ça, ta file n'est pas gâchée.
+
+Le workflow GitHub `publish.yml` ne se lance plus qu'à la main. Ne réactive pas son planning en même temps que le cron,
+sinon chaque vidéo partirait deux fois.
 
 ---
 
@@ -127,39 +147,34 @@ git push
 
 ### Ajouter des vidéos
 
-- **Où les mettre :** dans `input/`. Elles partent par ordre alphabétique, donc nomme-les `001.mp4`, `002.mp4`, etc.
-- **Légende (optionnel) :** crée un fichier texte du même nom (`001.txt`) avec la légende de la vidéo.
+- **Où les mettre :** dans `input/` sur le serveur, en `.mp4` ou `.mov`, par `scp`, `rsync` ou ton propre script.
+  Ces fichiers ne sont pas suivis par git.
+- **Légende (optionnel) :** crée un fichier texte du même nom (`video.txt` pour `video.mp4`).
   Sinon, c'est la légende par défaut de `config.yaml`. Les hashtags de `config.yaml` sont toujours ajoutés.
-- **Envoi :** commit et push avec GitHub Desktop.
-  Le site GitHub limite les fichiers à 25 Mo, git ou GitHub Desktop à **100 Mo**.
-- **Avant d'ajouter des vidéos :** fais **Fetch / Pull**, car le robot commit après chaque publication.
+- **Fichier encore en cours d'écriture :** pour que le cron ne prenne pas une vidéo à moitié copiée, écris-la d'abord sous un autre nom,
+  par exemple `video.mp4.part`, puis renomme-la en `.mp4`.
 
 En mode brouillon, TikTok ignore la légende : tu l'écris au moment de publier le brouillon dans l'appli.
 
 ### Format conseillé
 
-- MP4 (H.264 + AAC), **vertical 9:16** (1080×1920).
+- MP4 (H.264 + AAC), **vertical 9:16** (1080×1920), 4 Go maximum.
 - Entre 3 secondes et **3 minutes**. Au-delà de 3 minutes, YouTube ne la classe plus en Short.
 - Pas de filigrane TikTok sur les vidéos envoyées à Instagram et YouTube : ça réduit leur visibilité.
 
-### Horaires et fréquence
-
-Modifie les lignes `cron` dans `.github/workflows/publish.yml`. Les heures sont en UTC :
-ajoute 2 h l'été et 1 h l'hiver pour l'heure de Paris. Pour une seule vidéo par jour, supprime une des deux lignes.
-GitHub peut retarder un passage de quelques minutes, parfois plus aux heures de pointe.
-
 ### Suivi
 
-- **Si une publication échoue**, GitHub t'envoie un e-mail : le passage apparaît en rouge dans l'onglet Actions.
-  Ouvre-le pour lire le message, qui dit quoi faire.
-- **Historique :** `state/published.json` contient chaque vidéo, l'identifiant du post et l'erreur éventuelle.
-- **File d'attente :** lance `python -m autotiktok status` pour voir les vidéos en attente.
+- **Journal :** `logs/AAAA-MM.log` contient chaque passage, ce qui a été publié et les erreurs, avec ce qu'il faut faire.
+- **État :** lance `.venv/bin/python -m autotiktok status` pour voir les vidéos en attente et les dernières publiées.
+- **Fichiers d'état :**
+  - `state/published.json` : les vidéos en cours (nouvel essai prévu) ;
+  - `state/archive.jsonl` : toutes les vidéos terminées, avec les identifiants des posts.
 
 ### Ce qui se passe en cas d'échec
 
 - **Chaque plateforme est indépendante :** si YouTube échoue, Instagram et TikTok sont quand même publiés.
 - **Nouvel essai :** au passage suivant, seule la plateforme en échec est retentée, donc pas de doublon.
-- **Abandon :** après 3 échecs, ou une erreur définitive (vidéo refusée…), la vidéo passe dans `done/` et la suivante prend le relais.
+- **Abandon :** après 3 échecs, ou une erreur définitive (vidéo refusée…), la vidéo est supprimée, notée dans l'archive, et une autre prend le relais.
 
 ---
 
@@ -182,13 +197,11 @@ Tu devras fournir :
 - **une URL de site** avec une politique de confidentialité et des conditions d'utilisation.
   Le fichier [`docs/index.html`](docs/index.html) est prêt :
   - remplace `CONTACT_EMAIL` par ton adresse ;
-  - publie-le avec GitHub Pages (Settings → Pages → dossier `/docs`).
-  GitHub Pages est gratuit sur un repo public. Pour un repo privé, mets ce fichier dans un petit repo public séparé ;
+  - publie-le avec GitHub Pages (Settings → Pages → dossier `/docs`), ou sur ton serveur.
 - une description de l'usage et une vidéo de démonstration.
 
 ⚠️ Les règles de TikTok demandent que l'utilisateur confirme chaque publication. Une app qui publie
 **sans intervention** peut donc être refusée. Si c'est le cas, garde le mode brouillon (un tap par jour).
-Sinon, le site TikTok permet de programmer jusqu'à 10 jours de vidéos d'un coup.
 
 Une fois l'audit accepté, mets ceci dans `config.yaml` :
 
@@ -200,29 +213,27 @@ tiktok:
 
 ---
 
-## Coût et limites
+## Limites
 
-- **Gratuit** : un passage dure environ 2 à 5 minutes. Avec 2 passages par jour, ça fait environ 300 minutes par mois,
-  alors que GitHub offre 2000 minutes par mois sur un repo privé (illimité sur un repo public).
 - **Limites des plateformes :**
   - TikTok : environ 5 brouillons en attente maximum sur 24 h ;
   - Instagram : 50 posts par jour ;
   - YouTube : environ 6 envois par jour avec le quota gratuit.
-- **Taille du repo** : les vidéos restent dans l'historique git. Si le repo dépasse quelques Go, le plus simple est de
-  recréer un repo neuf. Pour garder le repo plus léger, utilise `queue.after_publish: delete`.
-- **Contenu non original** : Instagram et YouTube réduisent la portée des vidéos reprises d'autres créateurs, et YouTube peut
-  refuser la monétisation pour du « contenu réutilisé ».
+- **Droits d'auteur :** une vidéo reprise d'un autre créateur sans son accord s'expose à des réclamations
+  (Content ID sur YouTube, avertissements pour atteinte aux droits d'auteur, suppression sur Instagram et TikTok)
+  et peut faire fermer le compte. Instagram et YouTube réduisent aussi la portée du contenu non original.
 
 ## Développement
 
 ```bash
-python -m pip install -r requirements-dev.txt
-ruff check . && pytest
+.venv/bin/pip install -r requirements-dev.txt
+.venv/bin/ruff check . && .venv/bin/pytest
 ```
 
 Structure :
 - `autotiktok/platforms/` : un module par plateforme ;
 - `autotiktok/publisher.py` : le passage quotidien ;
-- `autotiktok/queue.py` : la file d'attente et l'état ;
+- `autotiktok/queue.py` : la file d'attente, l'état et l'archive ;
 - `autotiktok/tokens.py` : les jetons chiffrés ;
-- `autotiktok/oauth.py` : la connexion des comptes.
+- `autotiktok/oauth.py` : la connexion des comptes ;
+- `scripts/run.sh` : le script lancé par cron.

@@ -4,7 +4,7 @@ import pytest
 
 from autotiktok import publisher as publisher_mod
 from autotiktok.platforms.base import PermanentError, PublishResult, RetryableError
-from autotiktok.publisher import STATE_FILE, TOKENS_FILE, publish_next
+from autotiktok.publisher import ARCHIVE_FILE, STATE_FILE, TOKENS_FILE, publish_next
 from autotiktok.tokens import TokenStore
 
 
@@ -58,6 +58,11 @@ def state(root):
     return json.loads((root / STATE_FILE).read_text())["videos"]
 
 
+def archive(root):
+    lines = (root / ARCHIVE_FILE).read_text().splitlines()
+    return {e["name"]: e for e in map(json.loads, lines)}
+
+
 def test_publishes_oldest_video_everywhere_and_moves_it(project, config):
     assert publish_next(project, config, client=object()) == 0
     assert sorted(c[0] for c in FakePublisher.calls) == ["instagram", "tiktok", "youtube"]
@@ -65,7 +70,8 @@ def test_publishes_oldest_video_everywhere_and_moves_it(project, config):
     assert FakePublisher.calls[0][2] == "premier #funny #humour #fyp"
     assert (project / "done" / "001.mp4").exists() and (project / "done" / "001.txt").exists()
     assert (project / "input" / "002.mp4").exists()
-    assert state(project)["001.mp4"]["disposition"] == "moved"
+    assert archive(project)["001.mp4"]["disposition"] == "moved"
+    assert state(project) == {}
 
 
 def test_partial_failure_retries_only_failed_platform(project, config):
@@ -88,7 +94,7 @@ def test_gives_up_after_max_attempts(project, config):
     assert (project / "input" / "001.mp4").exists()
     publish_next(project, config, client=object())
     assert not (project / "input" / "001.mp4").exists()
-    assert state(project)["001.mp4"]["platforms"]["tiktok"]["status"] == "failed"
+    assert archive(project)["001.mp4"]["platforms"]["tiktok"]["status"] == "failed"
 
 
 def test_permanent_failure_does_not_block_queue(project, config):
@@ -100,7 +106,7 @@ def test_permanent_failure_does_not_block_queue(project, config):
 def test_disabled_platform_is_skipped(project, config):
     config["platforms"]["tiktok"] = False
     assert publish_next(project, config, client=object()) == 0
-    assert "tiktok" not in state(project)["001.mp4"]["platforms"]
+    assert "tiktok" not in archive(project)["001.mp4"]["platforms"]
     assert (project / "done" / "001.mp4").exists()
 
 
@@ -132,3 +138,28 @@ def test_dry_run_touches_nothing(project, config, monkeypatch, capsys):
     assert "001.mp4" in capsys.readouterr().out
     assert FakePublisher.calls == []
     assert not (project / STATE_FILE).exists()
+
+
+def test_random_order_finishes_started_video_first(project, config):
+    config["queue"]["order"] = "random"
+    FakePublisher.plan = {"youtube": "retry"}
+    publish_next(project, config, client=object())
+    started = next(iter(state(project)))
+    FakePublisher.plan = {}
+    FakePublisher.calls = []
+    publish_next(project, config, client=object())
+    assert {c[1] for c in FakePublisher.calls} == {started}
+
+
+def test_same_file_is_never_published_twice(project, config):
+    config["queue"]["after_publish"] = "delete"
+    (project / "input" / "002.mp4").write_bytes(b"y" * 10)
+    publish_next(project, config, client=object())
+    publish_next(project, config, client=object())
+    assert len(archive(project)) == 2
+    # Same bytes put back under a new name: skipped, not published.
+    (project / "input" / "copy.mp4").write_bytes(b"x" * 10)
+    FakePublisher.calls = []
+    assert publish_next(project, config, client=object()) == 0
+    assert FakePublisher.calls == []
+    assert not (project / "input" / "copy.mp4").exists()
