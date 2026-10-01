@@ -42,7 +42,8 @@ DEFAULTS: dict = {
         "min_views": 1_000_000,
         "max_reels_per_account": 0,
         "request_delay": [3, 6],
-        "user_agent": "",
+        "browser_path": "",
+        "headless": True,
     },
 }
 

@@ -9,12 +9,9 @@ import http.cookiejar
 import json
 import os
 import random
-import time
 from collections.abc import Callable, Iterator, Mapping
 from pathlib import Path
 from urllib.parse import urlparse
-
-import httpx
 
 from .config import enabled_platforms
 from .publisher import TOKENS_FILE, missing_setup, publish_next
@@ -22,11 +19,6 @@ from .queue import list_videos, now_iso
 from .tokens import TokenStore, key_from_env
 
 FETCHED_FILE = Path("state/fetched.jsonl")
-
-IG_APP_ID = "936619743392459"  # public app id of Instagram's own web client
-IG_API = "https://www.instagram.com/api/v1"
-DEFAULT_USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0"
-PAGE_SIZE = 12
 
 
 class FetchError(Exception):
@@ -66,78 +58,157 @@ def load_cookies(path: Path) -> http.cookiejar.MozillaCookieJar:
     return jar
 
 
-# --- Instagram's web API ----------------------------------------------------------------------------
+# --- listing the Reels with a real browser -------------------------------------------------------------
+
+# Instagram's own API answers 429 to anything that does not look like its web app, so the Reels tab
+# of a profile is opened in headless Chromium (with the cookies of the browsing account) and the
+# GraphQL answers the page receives while scrolling are read.
+MAX_IDLE_SCROLLS = 4
 
 
-def _api(client: httpx.Client, method: str, path: str, user_agent: str, **kwargs) -> dict:
-    headers = {
-        "X-IG-App-ID": IG_APP_ID,
-        "X-CSRFToken": client.cookies.get("csrftoken") or "",
-        "Referer": "https://www.instagram.com/",
-        "User-Agent": user_agent,
-    }
-    response = client.request(method, f"{IG_API}{path}", headers=headers, **kwargs)
-    if response.status_code in (401, 403):
-        raise FetchError("Instagram refuse la session : cookies absents ou expirés (ré-exporte le fichier de cookies).")
-    if response.status_code == 429:
-        raise RateLimited("Instagram limite les requêtes (429) : réessaie plus tard.")
-    if response.status_code != 200:
-        raise FetchError(f"Instagram a répondu {response.status_code} sur {path}.")
-    try:
-        return response.json()
-    except ValueError as exc:
-        raise FetchError(f"Réponse Instagram illisible sur {path}.") from exc
+def _find_key(obj, key: str):
+    if isinstance(obj, dict):
+        if key in obj:
+            return obj[key]
+        for value in obj.values():
+            found = _find_key(value, key)
+            if found is not None:
+                return found
+    elif isinstance(obj, list):
+        for value in obj:
+            found = _find_key(value, key)
+            if found is not None:
+                return found
+    return None
 
 
-def _reel_of(item: dict) -> dict | None:
-    media = item.get("media") or {}
-    code = media.get("code")
-    if not code:
-        return None
-    return {
-        "id": code,
-        "url": f"https://www.instagram.com/reel/{code}/",
-        "views": media.get("play_count") or media.get("view_count") or 0,
-        "caption": ((media.get("caption") or {}).get("text") or "").strip(),
-    }
+def parse_reels(payload: dict) -> tuple[list[dict], bool | None]:
+    """Reels of one GraphQL answer of the profile Reels tab, and whether more pages follow (None if unknown)."""
+    connection = _find_key(payload, "clips_connection")
+    if not isinstance(connection, dict):
+        return [], None
+    reels = []
+    for edge in connection.get("edges") or []:
+        media = (edge.get("node") or {}).get("media") or {}
+        code = media.get("code")
+        if not code:
+            continue
+        reels.append(
+            {
+                "id": code,
+                "url": f"https://www.instagram.com/reel/{code}/",
+                "views": media.get("play_count") or media.get("view_count") or 0,
+                "caption": ((media.get("caption") or {}).get("text") or "").strip(),
+            }
+        )
+    return reels, (connection.get("page_info") or {}).get("has_next_page")
 
 
-def iter_reels(
-    client: httpx.Client,
-    username: str,
-    *,
-    user_agent: str = DEFAULT_USER_AGENT,
-    limit: int = 0,
-    delay: tuple[float, float] = (0, 0),
-    sleep: Callable[[float], None] = time.sleep,
-    rng: random.Random | None = None,
-) -> Iterator[list[dict]]:
-    """The account's Reels, one page at a time (newest first): ``{id, url, views, caption}``.
+class BrowserLister:
+    """``with BrowserLister(...) as lister: lister.reels("user")`` yields the Reels page by page."""
 
-    ``limit`` caps the number of Reels read (0 = all of them). A random pause of ``delay`` seconds
-    separates two requests, to stay under Instagram's rate limit.
-    """
-    rng = rng or random.SystemRandom()
-    profile = _api(client, "GET", "/users/web_profile_info/", user_agent, params={"username": username})
-    user = (profile.get("data") or {}).get("user")
-    if not user or not user.get("id"):
-        raise FetchError(f"Compte introuvable ou privé : {username}.")
+    def __init__(
+        self,
+        cookies: http.cookiejar.CookieJar,
+        *,
+        delay: tuple[float, float] = (3, 6),
+        limit: int = 0,
+        executable_path: str = "",
+        headless: bool = True,
+        rng: random.Random | None = None,
+    ):
+        self.cookies = cookies
+        self.delay = delay
+        self.limit = limit
+        self.executable_path = executable_path
+        self.headless = headless
+        self.rng = rng or random.SystemRandom()
+        self._pending: list[tuple[list[dict], bool | None]] = []
+        self._rate_limited = False
 
-    seen = 0
-    max_id = ""
-    while True:
-        sleep(rng.uniform(*delay))
-        form = {"target_user_id": user["id"], "page_size": str(PAGE_SIZE)}
-        if max_id:
-            form["max_id"] = max_id
-        data = _api(client, "POST", "/clips/user/", user_agent, data=form)
-        page = [reel for item in data.get("items") or [] if (reel := _reel_of(item))]
-        seen += len(page)
-        yield page
-        paging = data.get("paging_info") or {}
-        max_id = paging.get("max_id") or ""
-        if not page or not paging.get("more_available") or not max_id or (limit and seen >= limit):
+    def __enter__(self) -> BrowserLister:
+        from playwright.sync_api import sync_playwright  # noqa: PLC0415
+
+        self._playwright = sync_playwright().start()
+        try:
+            launch = {"headless": self.headless}
+            if self.executable_path:
+                launch["executable_path"] = self.executable_path
+            self._browser = self._playwright.chromium.launch(**launch)
+            context = self._browser.new_context(viewport={"width": 1280, "height": 900})
+            context.add_cookies(
+                [
+                    {
+                        "name": c.name,
+                        "value": c.value or "",
+                        "domain": c.domain,
+                        "path": c.path,
+                        "secure": bool(c.secure),
+                        "expires": c.expires or -1,
+                    }
+                    for c in self.cookies
+                ]
+            )
+            self._page = context.new_page()
+            self._page.on("response", self._on_response)
+        except Exception:
+            self.__exit__(None, None, None)
+            raise
+        return self
+
+    def __exit__(self, *exc) -> None:
+        browser = getattr(self, "_browser", None)
+        if browser is not None:
+            browser.close()
+        self._playwright.stop()
+
+    def _on_response(self, response) -> None:
+        if "graphql" not in response.url:
             return
+        if response.status == 429:
+            self._rate_limited = True
+            return
+        try:
+            payload = response.json()
+        except Exception:  # noqa: BLE001 - not every GraphQL answer is JSON we care about
+            return
+        reels, has_next = parse_reels(payload) if isinstance(payload, dict) else ([], None)
+        if reels or has_next is not None:
+            self._pending.append((reels, has_next))
+
+    def reels(self, username: str) -> Iterator[list[dict]]:
+        """The account's Reels (newest first), one page at a time: ``{id, url, views, caption}``."""
+        page = self._page
+        self._pending.clear()
+        self._rate_limited = False
+        response = page.goto(f"https://www.instagram.com/{username}/reels/", wait_until="domcontentloaded")
+        if "/accounts/login" in page.url:
+            raise FetchError("Instagram demande de se connecter : cookies expirés (ré-exporte le fichier de cookies).")
+        if response is not None and response.status == 429:
+            raise RateLimited("Instagram limite les requêtes (429) : réessaie plus tard.")
+        if response is not None and response.status == 404:
+            raise FetchError(f"Compte introuvable : {username}.")
+
+        seen = idle = 0
+        has_next: bool | None = True
+        while True:
+            page.wait_for_timeout(self.rng.uniform(*self.delay) * 1000)
+            if self._rate_limited:
+                raise RateLimited("Instagram limite les requêtes (429) : réessaie plus tard.")
+            pending, self._pending = self._pending, []
+            batch = [reel for reels, _ in pending for reel in reels]
+            for _, flag in pending:
+                if flag is not None:
+                    has_next = flag
+            if batch:
+                seen += len(batch)
+                idle = 0
+                yield batch
+            else:
+                idle += 1
+            if has_next is False or idle >= MAX_IDLE_SCROLLS or (self.limit and seen >= self.limit):
+                return
+            page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
 
 
 # --- the index of Reels above the view threshold ---------------------------------------------------
@@ -173,7 +244,7 @@ def record_fetched(path: Path, entry: dict) -> None:
         fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
 
-def _open_client(root: Path, settings: dict) -> httpx.Client | None:
+def _default_lister(root: Path, settings: dict) -> BrowserLister | None:
     cookies_path = root / settings["cookies_file"]
     if not cookies_path.is_file():
         _log(f"{settings['cookies_file']} introuvable : exporte les cookies d'une session Instagram (voir le README).")
@@ -183,16 +254,20 @@ def _open_client(root: Path, settings: dict) -> httpx.Client | None:
     except FetchError as exc:
         _log(str(exc))
         return None
-    return httpx.Client(cookies=jar, timeout=30, follow_redirects=True)
+    return BrowserLister(
+        jar,
+        delay=tuple(settings["request_delay"]),
+        limit=settings["max_reels_per_account"],
+        executable_path=settings["browser_path"],
+        headless=settings["headless"],
+    )
 
 
 def refresh_index(
     root: Path,
     config: dict,
     *,
-    client: httpx.Client | None = None,
-    sleep: Callable[[float], None] = time.sleep,
-    rng: random.Random | None = None,
+    lister: BrowserLister | None = None,
 ) -> int:
     """List every Reel above ``min_views`` of every pool account into the index file.
 
@@ -204,33 +279,22 @@ def refresh_index(
     if not pool:
         _log(f"Aucun compte dans {settings['pool_file']}.")
         return 1
-    own_client = client is None
-    client = client or _open_client(root, settings)
-    if client is None:
+    lister = lister or _default_lister(root, settings)
+    if lister is None:
         return 1
 
     index_path = root / settings["index_file"]
     index = load_index(index_path)
-    delay = tuple(settings["request_delay"])
-    user_agent = settings["user_agent"] or DEFAULT_USER_AGENT
     failures = 0
-    try:
+    with lister:
         for profile in pool:
             username = username_of(profile)
             _log(f"Compte : {username}")
             kept = read = 0
             try:
-                for page in iter_reels(
-                    client,
-                    username,
-                    user_agent=user_agent,
-                    limit=settings["max_reels_per_account"],
-                    delay=delay,
-                    sleep=sleep,
-                    rng=rng,
-                ):
-                    read += len(page)
-                    for reel in page:
+                for batch in lister.reels(username):
+                    read += len(batch)
+                    for reel in batch:
                         if reel["views"] < settings["min_views"]:
                             continue
                         kept += 1
@@ -239,23 +303,21 @@ def refresh_index(
                             url=reel["url"],
                             account=username,
                             views=reel["views"],
-                            caption=reel["caption"],
+                            caption=reel["caption"] or entry.get("caption", ""),
                             updated_at=now_iso(),
                         )
                         entry.pop("gone", None)
+                    save_index(index_path, index)
             except RateLimited as exc:
                 save_index(index_path, index)
                 _log(f"  {exc} Arrêt : {len(index['reels'])} Reel(s) dans l'index, relance plus tard.")
                 return 1
-            except (FetchError, httpx.HTTPError) as exc:
+            except FetchError as exc:
                 failures += 1
                 _log(f"  ignoré : {exc}")
             else:
                 _log(f"  {read} Reel(s) lus, {kept} à plus de {settings['min_views']} vues.")
             save_index(index_path, index)
-    finally:
-        if own_client:
-            client.close()
     _log(f"Index : {len(index['reels'])} Reel(s) dans {settings['index_file']}.")
     return 1 if failures else 0
 

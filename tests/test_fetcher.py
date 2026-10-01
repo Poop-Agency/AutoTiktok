@@ -1,9 +1,7 @@
 import json
 import random
 
-import httpx
 import pytest
-import respx
 from yt_dlp.utils import DownloadError
 
 from autotiktok import fetcher
@@ -11,17 +9,15 @@ from autotiktok.fetcher import (
     FETCHED_FILE,
     FetchError,
     RateLimited,
-    iter_reels,
     load_fetched,
     load_index,
+    parse_reels,
     read_pool,
     record_fetched,
     refresh_index,
     username_of,
 )
 
-PROFILE = "https://www.instagram.com/api/v1/users/web_profile_info/"
-CLIPS = "https://www.instagram.com/api/v1/clips/user/"
 NETSCAPE = (
     "# Netscape HTTP Cookie File\n"
     ".instagram.com\tTRUE\t/\tTRUE\t2000000000\tsessionid\tabc\n"
@@ -29,20 +25,34 @@ NETSCAPE = (
 )
 
 
-def no_sleep(_seconds):
-    pass
+def reel(code, views, caption="Trop drôle"):
+    return {"id": code, "url": f"https://www.instagram.com/reel/{code}/", "views": views, "caption": caption}
 
 
-def clip(code, plays, caption="Trop drôle"):
-    return {"media": {"code": code, "play_count": plays, "caption": {"text": caption} if caption else None}}
+class FakeLister:
+    """Stands in for BrowserLister: ``pages[username]`` is a list of pages, or an exception to raise."""
+
+    def __init__(self, pages):
+        self.pages = pages
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def reels(self, username):
+        result = self.pages[username]
+        if isinstance(result, Exception):
+            raise result
+        yield from result
 
 
-def page(clips, max_id=None):
-    return {"items": clips, "paging_info": {"more_available": bool(max_id), "max_id": max_id or ""}}
-
-
-def mock_profile(username="a", user_id="42"):
-    return respx.get(PROFILE, params={"username": username}).respond(json={"data": {"user": {"id": user_id}}})
+def graphql(edges, has_next=None):
+    connection = {"edges": [{"node": {"media": media}} for media in edges]}
+    if has_next is not None:
+        connection["page_info"] = {"has_next_page": has_next, "end_cursor": "x"}
+    return {"data": {"fetch__XDTUserDict": {"clips_connection": connection}}}
 
 
 class FakeYDL:
@@ -113,92 +123,58 @@ def test_fetched_ledger_round_trip(tmp_path):
     assert load_fetched(path) == {"A1", "B2"}
 
 
-@respx.mock
-def test_iter_reels_follows_pagination():
-    mock_profile()
-    route = respx.post(CLIPS).mock(
-        side_effect=[
-            httpx.Response(200, json=page([clip("AAA", 1_500_000), {"media": {}}], max_id="next")),
-            httpx.Response(200, json=page([clip("BBB", 10, caption=None)])),
-        ]
+def test_parse_reels_reads_plays_and_pagination():
+    payload = graphql(
+        [
+            {"code": "AAA", "play_count": 1_500_000, "view_count": 3, "caption": {"text": " Trop drôle "}},
+            {"code": "BBB", "play_count": None, "view_count": 10, "caption": None},
+            {"code": None, "play_count": 5},
+        ],
+        has_next=True,
     )
-    with httpx.Client(cookies={"csrftoken": "tok"}) as client:
-        pages = list(iter_reels(client, "a", sleep=no_sleep))
-    assert pages == [
-        [{"id": "AAA", "url": "https://www.instagram.com/reel/AAA/", "views": 1_500_000, "caption": "Trop drôle"}],
-        [{"id": "BBB", "url": "https://www.instagram.com/reel/BBB/", "views": 10, "caption": ""}],
-    ]
-    first, second = (call.request for call in route.calls)
-    assert b"target_user_id=42" in first.content
-    assert b"max_id" not in first.content
-    assert b"max_id=next" in second.content
-    assert first.headers["x-csrftoken"] == "tok"
+    reels, has_next = parse_reels(payload)
+    assert reels == [reel("AAA", 1_500_000), reel("BBB", 10, caption="")]
+    assert has_next is True
+    assert parse_reels(graphql([], has_next=False)) == ([], False)
 
 
-@respx.mock
-def test_iter_reels_stops_at_limit():
-    mock_profile()
-    route = respx.post(CLIPS).respond(json=page([clip("A", 1), clip("B", 1)], max_id="more"))
-    with httpx.Client() as client:
-        pages = list(iter_reels(client, "a", limit=2, sleep=no_sleep))
-    assert len(pages) == 1
-    assert route.call_count == 1
+def test_parse_reels_ignores_unrelated_answers():
+    assert parse_reels({"data": {"viewer": {"id": "1"}}}) == ([], None)
+    assert parse_reels({}) == ([], None)
 
 
-@respx.mock
-@pytest.mark.parametrize(("status", "text"), [(401, "cookies"), (403, "cookies"), (429, "limite"), (500, "500")])
-def test_iter_reels_http_errors(status, text):
-    respx.get(PROFILE).respond(status)
-    with httpx.Client() as client, pytest.raises(FetchError, match=text):
-        list(iter_reels(client, "a", sleep=no_sleep))
-
-
-@respx.mock
-def test_iter_reels_unknown_account():
-    respx.get(PROFILE).respond(json={"data": {"user": None}})
-    with httpx.Client() as client, pytest.raises(FetchError, match="introuvable"):
-        list(iter_reels(client, "ghost", sleep=no_sleep))
-
-
-@respx.mock
 def test_refresh_index_keeps_only_popular_and_merges(project, config):
     write_index(project, config, {"old": entry("old", views=1_200_000, account="b")})
-    mock_profile()
-    respx.post(CLIPS).respond(json=page([clip("low", 999_999), clip("ok", 1_000_000), clip("big", 9_000_000)]))
-    assert refresh_index(project, config, sleep=no_sleep) == 0
+    lister = FakeLister({"a": [[reel("low", 999_999), reel("ok", 1_000_000)], [reel("big", 9_000_000)]]})
+    assert refresh_index(project, config, lister=lister) == 0
     reels = load_index(project / config["fetch"]["index_file"])["reels"]
     assert set(reels) == {"old", "ok", "big"}  # earlier entries are kept, "low" is below the threshold
     assert reels["ok"]["account"] == "a"
     assert reels["big"]["views"] == 9_000_000
     # A second run updates the views instead of duplicating.
-    respx.post(CLIPS).respond(json=page([clip("ok", 1_100_000)]))
-    refresh_index(project, config, sleep=no_sleep)
+    refresh_index(project, config, lister=FakeLister({"a": [[reel("ok", 1_100_000, caption="")]]}))
     reels = load_index(project / config["fetch"]["index_file"])["reels"]
     assert len(reels) == 3
     assert reels["ok"]["views"] == 1_100_000
+    assert reels["ok"]["caption"] == "Trop drôle"  # an empty caption never erases a known one
 
 
-@respx.mock
 def test_refresh_index_saves_progress_and_stops_on_rate_limit(project, config):
     (project / "account_pools.txt").write_text(
-        "https://www.instagram.com/a/\nhttps://www.instagram.com/b/\n", encoding="utf-8"
+        "https://www.instagram.com/a/\nhttps://www.instagram.com/b/\nhttps://www.instagram.com/c/\n",
+        encoding="utf-8",
     )
-    mock_profile("a")
-    respx.get(PROFILE, params={"username": "b"}).respond(429)
-    respx.post(CLIPS).respond(json=page([clip("ok", 2_000_000)]))
-    assert refresh_index(project, config, sleep=no_sleep, rng=random.Random(0)) == 1
+    lister = FakeLister({"a": [[reel("ok", 2_000_000)]], "b": RateLimited("429"), "c": [[reel("never", 5_000_000)]]})
+    assert refresh_index(project, config, lister=lister) == 1
     assert set(load_index(project / config["fetch"]["index_file"])["reels"]) == {"ok"}
 
 
-@respx.mock
 def test_refresh_index_skips_failing_account(project, config):
     (project / "account_pools.txt").write_text(
         "https://www.instagram.com/bad/\nhttps://www.instagram.com/good/\n", encoding="utf-8"
     )
-    respx.get(PROFILE, params={"username": "bad"}).respond(403)
-    mock_profile("good", "7")
-    respx.post(CLIPS).respond(json=page([clip("ok", 2_000_000)]))
-    assert refresh_index(project, config, sleep=no_sleep) == 1
+    lister = FakeLister({"bad": FetchError("Compte introuvable"), "good": [[reel("ok", 2_000_000)]]})
+    assert refresh_index(project, config, lister=lister) == 1
     assert set(load_index(project / config["fetch"]["index_file"])["reels"]) == {"ok"}
 
 

@@ -47,5 +47,6 @@ fetch:
   index_file: state/index.json     # liste des Reels à plus de min_views vues
   min_views: 1000000
   max_reels_per_account: 0         # 0 = tous les Reels du compte
-  request_delay: [3, 6]            # pause aléatoire (secondes) entre deux requêtes Instagram
-  user_agent: ""                   # vide = Firefox générique ; copie celui de ton navigateur si Instagram répond 429
+  request_delay: [3, 6]            # pause aléatoire (secondes) entre deux défilements de la page
+  browser_path: ""                 # vide = Chromium installé par `playwright install chromium`
+  headless: true                   # false : affiche le navigateur (utile pour comprendre un blocage)
