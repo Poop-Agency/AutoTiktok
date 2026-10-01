@@ -1,0 +1,39 @@
+# Réglages d'AutoTiktok. Tout est optionnel : les valeurs absentes prennent leur valeur par défaut.
+
+# Plateformes sur lesquelles publier (true / false).
+platforms:
+  instagram: true
+  tiktok: true
+  youtube: true
+
+# Légende utilisée quand une vidéo n'a pas de fichier .txt du même nom.
+# Les hashtags sont ajoutés à la fin de chaque légende.
+caption:
+  default: "😂"
+  hashtags: "#funny #humour #fyp"
+
+instagram:
+  share_to_feed: true        # le Reel apparaît aussi dans la grille du profil
+
+tiktok:
+  # draft  : la vidéo arrive dans tes brouillons TikTok, tu publies d'un tap (marche sans audit).
+  # direct : publication directe. Avant l'audit TikTok, seul privacy_level SELF_ONLY est accepté.
+  mode: draft
+  privacy_level: PUBLIC_TO_EVERYONE   # PUBLIC_TO_EVERYONE | MUTUAL_FOLLOW_FRIENDS | FOLLOWER_OF_CREATOR | SELF_ONLY
+  disable_comment: false
+  disable_duet: false
+  disable_stitch: false
+  is_aigc: false
+
+youtube:
+  title: "{caption}"         # {caption} est remplacé par la légende ; #Shorts est ajouté automatiquement
+  privacy: public            # public | unlisted | private (privé forcé par YouTube tant que l'audit n'est pas passé)
+  category_id: "23"          # 23 = Humour
+  made_for_kids: false
+  tags: [funny, humour, shorts]
+
+queue:
+  input_dir: input
+  done_dir: done
+  after_publish: move        # move : déplace vers done/ ; delete : supprime la vidéo une fois publiée
+  max_attempts: 3            # au bout de 3 échecs sur une plateforme, on passe à la vidéo suivante
