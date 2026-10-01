@@ -11,10 +11,11 @@ import httpx
 
 from . import oauth
 from .config import ConfigError, load_config
-from .fetcher import post_next, refresh_index
+from .fetcher import refresh_index
 from .platforms.base import HTTP_TIMEOUT
 from .publisher import TOKENS_FILE, publish_next, status
 from .tokens import TokenStore, TokenStoreError, generate_key, key_from_env
+from .uploader import post_next
 
 
 def load_env_file(path: Path) -> None:
@@ -43,7 +44,7 @@ def main(argv: list[str] | None = None) -> int:
     refresh.add_argument(
         "--min-views", type=int, metavar="N", help="seuil de vues pour cette fois (défaut : config.yaml)"
     )
-    post = sub.add_parser("post-next", help="télécharge un Reel de l'index et le publie")
+    post = sub.add_parser("post-next", help="télécharge un Reel de l'index et le publie sur le compte d'upload")
     post.add_argument("--dry-run", action="store_true", help="affiche le Reel choisi, sans rien télécharger ni publier")
     sub.add_parser("status", help="affiche la file d'attente et les dernières publications")
     sub.add_parser("keygen", help="génère une clé TOKENS_KEY")

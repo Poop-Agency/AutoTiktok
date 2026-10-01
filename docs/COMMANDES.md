@@ -12,7 +12,7 @@ Toutes les commandes se lancent depuis le dossier du projet :
 | Commande | À quoi elle sert |
 |---|---|
 | [`refresh-index`](#refresh-index) | liste les Reels populaires des comptes de `account_pools.txt` |
-| [`post-next`](#post-next) | télécharge un Reel de la liste et le publie |
+| [`post-next`](#post-next) | télécharge un Reel de la liste et le publie sur le compte d'upload |
 | [`publish-next`](#publish-next) | publie la prochaine vidéo déjà présente dans `input/` |
 | [`status`](#status) | affiche la file d'attente et les dernières publications |
 | [`auth`](#auth) | connecte un compte (TikTok, YouTube, Instagram) |
@@ -77,8 +77,12 @@ python -m autotiktok refresh-index --account granny___1 --min-views 100000
 
 ## post-next
 
-Prend un Reel de l'index que tu n'as jamais pris, le télécharge dans `input/` avec sa légende, le publie sur les
-plateformes activées, supprime le fichier et l'ajoute à l'archive.
+Prend un Reel de l'index que tu n'as jamais pris, le télécharge dans `input/` avec sa légende, le **publie sur le
+compte d'upload** (le compte « bestof »), supprime le fichier et l'ajoute à l'archive.
+
+La publication passe par le site instagram.com, dans un navigateur invisible connecté avec les cookies du compte
+d'upload (`cookies_upload.txt`). Elle n'utilise ni l'API officielle ni TikTok / YouTube : pour ceux-là,
+utilise `publish-next`.
 
 ```
 python -m autotiktok post-next [--dry-run]
@@ -99,13 +103,25 @@ python -m autotiktok post-next --dry-run
 python -m autotiktok post-next
 ```
 
+**Ce qui se passe, dans l'ordre**
+1. Vérifie `cookies_upload.txt` (présent, avec un cookie `sessionid`). Sinon la commande s'arrête **avant** de
+   télécharger : aucun Reel n'est « brûlé ».
+2. Tire un Reel de l'index au hasard, jamais pris (`state/fetched.jsonl`), et le télécharge dans `input/`.
+3. Ouvre instagram.com, publie le Reel avec la légende d'origine suivie des `caption.hashtags`.
+4. Attend que le Reel apparaisse sur le profil du compte d'upload (jusqu'à `upload.share_timeout` secondes).
+5. Supprime la vidéo de `input/` et écrit une ligne dans `state/archive.jsonl`.
+
+**Où est enregistrée l'URL utilisée**
+- `state/fetched.jsonl` : une ligne par Reel téléchargé, avec l'URL source, le compte d'origine, les vues, le
+  fichier et la date. C'est ce qui empêche de reprendre deux fois le même Reel.
+- `state/archive.jsonl` : une ligne par Reel publié, avec `source_url`, `source_account` et l'URL du Reel
+  publié sur le compte d'upload (`platforms.instagram.post_id`).
+
 À savoir :
-- Le Reel est **tiré au hasard** parmi ceux de l'index qui ne figurent pas dans `state/fetched.jsonl`. Un Reel n'est
-  jamais repris.
-- Si les comptes de publication ne sont pas connectés, la commande s'arrête **avant** de télécharger (aucun Reel n'est
-  « brûlé »).
-- Si une vidéo est déjà dans `input/` (publication précédente à retenter), elle est publiée sans nouveau
-  téléchargement.
+- Si la publication échoue (interface d'Instagram qui change, cookies expirés), la vidéo **reste dans `input/`**
+  et le prochain `post-next` la republie sans retélécharger.
+- Si le Reel n'apparaît pas sur le profil dans le délai, la commande s'arrête avec un message : il est peut-être
+  publié. **Vérifie le profil avant de relancer**, sinon tu risques un doublon.
 - Un Reel qui n'est plus disponible sur Instagram est marqué `gone` dans l'index et un autre est tiré.
 - Pour l'automatiser, mets `post-next` à la place de `publish-next` dans `scripts/run.sh`.
 
@@ -233,8 +249,18 @@ du Reel est écrite dans ce fichier `.txt`.
 | `after_publish` | `move` (`delete` dans le `config.yaml` fourni) | `delete` : supprime la vidéo une fois publiée. `move` : la déplace dans `done_dir` |
 | `max_attempts` | `3` | au bout de ce nombre d'échecs sur une plateforme, on abandonne cette plateforme pour cette vidéo |
 
+### `upload`
+Compte sur lequel `post-next` publie (le compte « bestof »).
+
+| Clé | Défaut | Rôle |
+|---|---|---|
+| `cookies_file` | `cookies_upload.txt` | cookies (format Netscape) **de ce compte**, avec au minimum `sessionid`. Jamais dans git |
+| `browser_path` | `""` | chemin d'un Chromium. Vide = celui installé par `playwright install chromium` |
+| `headless` | `true` | `false` affiche le navigateur : utile pour voir une publication bloquée |
+| `share_timeout` | `240` | secondes d'attente maximum pour que le Reel apparaisse sur le profil après « Share » |
+
 ### `fetch`
-Réglages de `refresh-index` et `post-next`.
+Réglages de `refresh-index` (et du téléchargement de `post-next`).
 
 | Clé | Défaut | Rôle |
 |---|---|---|
@@ -260,11 +286,12 @@ fetch:            # exemple : mises à jour rapides, 150 Reels récents par comp
 | Fichier | Contenu | Dans git ? |
 |---|---|---|
 | `account_pools.txt` | comptes Instagram à lister | oui |
-| `cookies_browse.txt` | cookies du compte jetable (lecture seule d'Instagram) | **non** |
+| `cookies_browse.txt` | cookies du compte jetable, qui sert à lister et à télécharger | **non** |
+| `cookies_upload.txt` | cookies du compte « bestof », sur lequel `post-next` publie | **non** |
 | `.env` | `TOKENS_KEY` et clés des API TikTok / YouTube / Instagram | **non** |
 | `state/index.json` | liste des Reels au-dessus du seuil, et comptes déjà listés | non |
-| `state/fetched.jsonl` | Reels déjà téléchargés (jamais repris) | non |
-| `state/archive.jsonl` | vidéos déjà publiées (empreinte du fichier) | non |
+| `state/fetched.jsonl` | URL de chaque Reel téléchargé (jamais repris) | non |
+| `state/archive.jsonl` | vidéos déjà publiées : empreinte, URL source, URL publiée | non |
 | `state/published.json` | état des publications en cours | non |
 | `state/tokens.enc` | jetons des comptes de publication, chiffrés | non |
 | `input/` | vidéos en attente | non |
@@ -279,4 +306,6 @@ fetch:            # exemple : mises à jour rapides, 150 Reels récents par comp
 | `X n'est pas dans le pool` | ajoute le compte à `account_pools.txt` avant `--account` |
 | `Aucun nouveau compte à lister` | normal : `--new` n'a rien à faire, tous les comptes sont déjà dans l'index |
 | `Aucun Reel disponible dans l'index` | lance d'abord `refresh-index`, ou tous les Reels de l'index ont déjà été pris |
-| `Configuration incomplète, aucun Reel téléchargé` | un compte de publication n'est pas connecté : `auth <plateforme>`, ou désactive-le dans `platforms` |
+| `Configuration incomplète, aucun Reel téléchargé` | `cookies_upload.txt` est absent ou sans `sessionid` : colle-y l'export des cookies du compte d'upload |
+| `Instagram demande de se connecter : cookies du compte d'upload expirés` | ré-exporte les cookies du compte d'upload |
+| `Interface d'Instagram inattendue, rien n'a été publié` | Instagram a changé son site : lance avec `upload.headless: false` pour voir où ça bloque |

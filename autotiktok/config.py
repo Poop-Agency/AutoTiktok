@@ -35,6 +35,12 @@ DEFAULTS: dict = {
         "after_publish": "move",
         "max_attempts": 3,
     },
+    "upload": {
+        "cookies_file": "cookies_upload.txt",
+        "browser_path": "",
+        "headless": True,
+        "share_timeout": 240,
+    },
     "fetch": {
         "pool_file": "account_pools.txt",
         "cookies_file": "cookies_browse.txt",
@@ -82,6 +88,8 @@ def load_config(path: Path) -> dict:
     for key in ("min_views", "max_reels_per_account"):
         if not isinstance(fetch[key], int) or fetch[key] < 0:
             raise ConfigError(f"fetch.{key} doit être un entier positif ou nul.")
+    if not isinstance(config["upload"]["share_timeout"], int | float) or config["upload"]["share_timeout"] <= 0:
+        raise ConfigError("upload.share_timeout doit être un nombre de secondes positif.")
     delay = fetch["request_delay"]
     if not (isinstance(delay, list) and len(delay) == 2 and 0 <= delay[0] <= delay[1]):
         raise ConfigError("fetch.request_delay doit être [min, max] en secondes, par exemple [3, 6].")

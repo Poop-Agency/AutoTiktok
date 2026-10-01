@@ -173,9 +173,11 @@ Deux commandes, qui se partagent un index (`state/index.json`) :
    - `--min-views N` : seuil de vues pour cette fois, à la place de `fetch.min_views` (par exemple `--min-views 100000`).
      Baisser le seuil ne retrouve pas les Reels des comptes déjà listés : relance-les avec `--account NOM --min-views N`.
 2. **`python -m autotiktok post-next`** tire dans l'index un Reel jamais pris, le télécharge dans `input/` avec sa légende,
-   le publie sur les comptes connectés (comme `publish-next`), supprime le fichier et l'ajoute à l'archive.
+   le publie sur le **compte d'upload** (compte « bestof »), supprime le fichier et l'ajoute à l'archive.
+   La publication passe par instagram.com avec les cookies de ce compte, à coller dans `cookies_upload.txt`
+   (ignoré par git, comme `cookies_browse.txt`). `publish-next` reste la commande pour tes propres vidéos, par les API officielles.
    Les URLs déjà prises sont dans `state/fetched.jsonl` : un Reel n'est jamais repris. `--dry-run` affiche le choix sans rien faire.
-   Si les comptes de publication ne sont pas connectés, rien n'est téléchargé.
+   Si `cookies_upload.txt` est vide, rien n'est téléchargé.
 
 ⚠️ N'utilise que des comptes **à toi ou dont les propriétaires t'ont donné leur accord** : republier la vidéo de quelqu'un d'autre
 sans autorisation viole le droit d'auteur et les règles des plateformes.

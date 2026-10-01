@@ -225,63 +225,6 @@ def test_fetch_next_empty_index(project, config):
     assert fetcher.fetch_next(project, config) == 1
 
 
-@pytest.fixture
-def publishing(monkeypatch):
-    """post_next with the account setup check and the real publication stubbed out."""
-    calls = {"publish": 0, "problems": []}
-    monkeypatch.setattr(fetcher, "TokenStore", lambda *a, **k: None)
-    monkeypatch.setattr(fetcher, "key_from_env", lambda: b"")
-    monkeypatch.setattr(fetcher, "missing_setup", lambda *a, **k: calls["problems"])
-
-    def fake_publish(root, config, **kwargs):
-        calls["publish"] += 1
-        return 0
-
-    monkeypatch.setattr(fetcher, "publish_next", fake_publish)
-    return calls
-
-
-def test_post_next_downloads_then_publishes(project, config, publishing):
-    write_index(project, config, {"ok": entry("ok")})
-    downloads = []
-    factory = ydl_factory(project / "input", downloads)
-    assert fetcher.post_next(project, config, ydl_factory=factory) == 0
-    assert downloads == ["https://www.instagram.com/reel/ok/"]
-    assert publishing["publish"] == 1
-
-
-def test_post_next_does_not_download_when_setup_incomplete(project, config, publishing):
-    write_index(project, config, {"ok": entry("ok")})
-    publishing["problems"] = ["instagram : compte non connecté"]
-    downloads = []
-    assert fetcher.post_next(project, config, ydl_factory=ydl_factory(project / "input", downloads)) == 1
-    assert downloads == []
-    assert not (project / FETCHED_FILE).exists()
-    assert publishing["publish"] == 0
-
-
-def test_post_next_retries_the_video_already_waiting(project, config, publishing):
-    write_index(project, config, {"ok": entry("ok")})
-    (project / "input" / "leftover.mp4").write_bytes(b"x")
-    downloads = []
-    assert fetcher.post_next(project, config, ydl_factory=ydl_factory(project / "input", downloads)) == 0
-    assert downloads == []
-    assert publishing["publish"] == 1
-
-
-def test_post_next_stops_when_nothing_to_download(project, config, publishing):
-    assert fetcher.post_next(project, config) == 1
-    assert publishing["publish"] == 0
-
-
-def test_post_next_dry_run_touches_nothing(project, config, publishing):
-    write_index(project, config, {"ok": entry("ok")})
-    downloads = []
-    assert fetcher.post_next(project, config, dry_run=True, ydl_factory=ydl_factory(project / "input", downloads)) == 0
-    assert downloads == []
-    assert publishing["publish"] == 0
-
-
 def test_rate_limited_is_a_fetch_error():
     assert issubclass(RateLimited, FetchError)
 

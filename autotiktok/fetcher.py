@@ -7,16 +7,12 @@ from __future__ import annotations
 
 import http.cookiejar
 import json
-import os
 import random
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from urllib.parse import urlparse
 
-from .config import enabled_platforms
-from .publisher import TOKENS_FILE, missing_setup, publish_next
-from .queue import list_videos, now_iso
-from .tokens import TokenStore, key_from_env
+from .queue import now_iso
 
 FETCHED_FILE = Path("state/fetched.jsonl")
 
@@ -56,6 +52,21 @@ def load_cookies(path: Path) -> http.cookiejar.MozillaCookieJar:
     except (OSError, http.cookiejar.LoadError) as exc:
         raise FetchError(f"{path.name} illisible (format Netscape attendu) : {exc}") from exc
     return jar
+
+
+def playwright_cookies(jar: http.cookiejar.CookieJar) -> list[dict]:
+    """A cookie jar in the format ``BrowserContext.add_cookies`` expects."""
+    return [
+        {
+            "name": c.name,
+            "value": c.value or "",
+            "domain": c.domain,
+            "path": c.path,
+            "secure": bool(c.secure),
+            "expires": c.expires or -1,
+        }
+        for c in jar
+    ]
 
 
 # --- listing the Reels with a real browser -------------------------------------------------------------
@@ -136,19 +147,7 @@ class BrowserLister:
                 launch["executable_path"] = self.executable_path
             self._browser = self._playwright.chromium.launch(**launch)
             context = self._browser.new_context(viewport={"width": 1280, "height": 900})
-            context.add_cookies(
-                [
-                    {
-                        "name": c.name,
-                        "value": c.value or "",
-                        "domain": c.domain,
-                        "path": c.path,
-                        "secure": bool(c.secure),
-                        "expires": c.expires or -1,
-                    }
-                    for c in self.cookies
-                ]
-            )
+            context.add_cookies(playwright_cookies(self.cookies))
             self._page = context.new_page()
             self._page.on("response", self._on_response)
         except Exception:
@@ -439,33 +438,3 @@ def fetch_next(
 
     _log("Aucun Reel de l'index n'a pu être téléchargé.")
     return 1
-
-
-def post_next(
-    root: Path,
-    config: dict,
-    *,
-    dry_run: bool = False,
-    env: Mapping[str, str] = os.environ,
-    **fetch_kwargs,
-) -> int:
-    """Download a Reel from the index (unless a video is already waiting) and publish it."""
-    root = Path(root)
-    waiting = list_videos(root / config["queue"]["input_dir"])
-    if waiting:
-        _log(f"{len(waiting)} vidéo(s) déjà dans input/ : pas de nouveau téléchargement.")
-    elif dry_run:
-        return fetch_next(root, config, dry_run=True, **fetch_kwargs)
-    else:
-        # A setup problem must not burn a Reel: check the accounts before downloading anything.
-        platforms = enabled_platforms(config)
-        problems = missing_setup(platforms, TokenStore(root / TOKENS_FILE, key_from_env()), env) if platforms else []
-        if problems:
-            _log("Configuration incomplète, aucun Reel téléchargé :")
-            for problem in problems:
-                _log(f"  - {problem}")
-            return 1
-        code = fetch_next(root, config, **fetch_kwargs)
-        if code != 0:
-            return code
-    return publish_next(root, config, dry_run=dry_run, env=env)

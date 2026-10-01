@@ -39,6 +39,13 @@ queue:
   after_publish: delete      # delete : supprime la vidéo une fois publiée ; move : la déplace vers done/
   max_attempts: 3            # au bout de 3 échecs sur une plateforme, on passe à la vidéo suivante
 
+# Compte sur lequel `post-next` publie (le compte « bestof »), par le site web d'Instagram.
+upload:
+  cookies_file: cookies_upload.txt # cookies (format Netscape) de CE compte, avec sessionid (jamais dans git)
+  browser_path: ""                 # vide = Chromium installé par `playwright install chromium`
+  headless: true                   # false : affiche le navigateur
+  share_timeout: 240               # secondes d'attente maximum pour que le Reel apparaisse sur le profil
+
 # Reels des comptes du pool (comptes à toi ou autorisés uniquement).
 # `refresh-index` liste leurs Reels populaires, `post-next` en télécharge un et le publie.
 fetch:
