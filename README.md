@@ -158,6 +158,8 @@ En mode brouillon, TikTok ignore la légende : tu l'écris au moment de publier 
 
 ### Récupérer des vidéos d'un pool de comptes
 
+📖 Toutes les commandes et tous les réglages, avec des exemples : [docs/COMMANDES.md](docs/COMMANDES.md).
+
 Deux commandes, qui se partagent un index (`state/index.json`) :
 
 1. **`python -m autotiktok refresh-index`** lit tous les Reels des profils de `account_pools.txt` (un profil Instagram par ligne)
