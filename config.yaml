@@ -38,3 +38,14 @@ queue:
   order: random              # random : vidéo tirée au hasard ; alphabetical : par ordre de nom
   after_publish: delete      # delete : supprime la vidéo une fois publiée ; move : la déplace vers done/
   max_attempts: 3            # au bout de 3 échecs sur une plateforme, on passe à la vidéo suivante
+
+# Reels des comptes du pool (comptes à toi ou autorisés uniquement).
+# `refresh-index` liste leurs Reels populaires, `post-next` en télécharge un et le publie.
+fetch:
+  pool_file: account_pools.txt     # un profil Instagram par ligne
+  cookies_file: cookies_browse.txt # cookies (format Netscape) du compte Instagram jetable qui sert à lister (jamais dans git)
+  index_file: state/index.json     # liste des Reels à plus de min_views vues
+  min_views: 1000000
+  max_reels_per_account: 0         # 0 = tous les Reels du compte
+  request_delay: [3, 6]            # pause aléatoire (secondes) entre deux requêtes Instagram
+  user_agent: ""                   # vide = Firefox générique ; copie celui de ton navigateur si Instagram répond 429

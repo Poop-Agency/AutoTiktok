@@ -11,6 +11,7 @@ import httpx
 
 from . import oauth
 from .config import ConfigError, load_config
+from .fetcher import post_next, refresh_index
 from .platforms.base import HTTP_TIMEOUT
 from .publisher import TOKENS_FILE, publish_next, status
 from .tokens import TokenStore, TokenStoreError, generate_key, key_from_env
@@ -35,6 +36,9 @@ def main(argv: list[str] | None = None) -> int:
 
     publish = sub.add_parser("publish-next", help="publie la prochaine vidéo de input/")
     publish.add_argument("--dry-run", action="store_true", help="affiche ce qui serait publié, sans rien envoyer")
+    sub.add_parser("refresh-index", help="liste tous les Reels à plus d'1 M de vues des comptes du pool")
+    post = sub.add_parser("post-next", help="télécharge un Reel de l'index et le publie")
+    post.add_argument("--dry-run", action="store_true", help="affiche le Reel choisi, sans rien télécharger ni publier")
     sub.add_parser("status", help="affiche la file d'attente et les dernières publications")
     sub.add_parser("keygen", help="génère une clé TOKENS_KEY")
     auth = sub.add_parser("auth", help="connecte un compte (à lancer une fois, sur ton ordinateur)")
@@ -53,6 +57,10 @@ def main(argv: list[str] | None = None) -> int:
         config = load_config(root / "config.yaml")
         if args.command == "publish-next":
             return publish_next(root, config, dry_run=args.dry_run)
+        if args.command == "refresh-index":
+            return refresh_index(root, config)
+        if args.command == "post-next":
+            return post_next(root, config, dry_run=args.dry_run)
         if args.command == "status":
             status(root, config)
             return 0

@@ -156,6 +156,30 @@ sinon chaque vidéo partirait deux fois.
 
 En mode brouillon, TikTok ignore la légende : tu l'écris au moment de publier le brouillon dans l'appli.
 
+### Récupérer des vidéos d'un pool de comptes
+
+Deux commandes, qui se partagent un index (`state/index.json`) :
+
+1. **`python -m autotiktok refresh-index`** lit tous les Reels des profils de `account_pools.txt` (un profil Instagram par ligne)
+   et note dans l'index ceux qui dépassent `fetch.min_views` vues (1 million par défaut). Il n'y a pas de requête par vidéo,
+   mais des pauses de quelques secondes entre les requêtes (`fetch.request_delay`) : compte une dizaine de minutes pour quelques comptes.
+   À relancer à la main de temps en temps, pour rattraper les Reels qui passent la barre du million. Un 429 d'Instagram
+   arrête proprement la commande : ce qui est déjà trouvé est gardé.
+2. **`python -m autotiktok post-next`** tire dans l'index un Reel jamais pris, le télécharge dans `input/` avec sa légende,
+   le publie sur les comptes connectés (comme `publish-next`), supprime le fichier et l'ajoute à l'archive.
+   Les URLs déjà prises sont dans `state/fetched.jsonl` : un Reel n'est jamais repris. `--dry-run` affiche le choix sans rien faire.
+   Si les comptes de publication ne sont pas connectés, rien n'est téléchargé.
+
+⚠️ N'utilise que des comptes **à toi ou dont les propriétaires t'ont donné leur accord** : republier la vidéo de quelqu'un d'autre
+sans autorisation viole le droit d'auteur et les règles des plateformes.
+
+Instagram n'a pas d'API pour lire les vidéos d'un autre compte. La liste des Reels (avec leurs vues) vient de l'API web d'Instagram,
+non officielle, avec les cookies d'une session ; le téléchargement passe par [yt-dlp](https://github.com/yt-dlp/yt-dlp).
+Cette session est celle d'un compte Instagram **jetable, uniquement pour lister** : ce n'est pas le compte sur lequel tu publies.
+Exporte ses cookies au format Netscape (extension « cookies.txt ») dans `cookies_browse.txt` à la racine du projet (ignoré par git),
+en ne gardant que ceux d'`instagram.com`. Si Instagram répond 429, copie le User-Agent de ton navigateur dans `fetch.user_agent`.
+Si le téléchargement échoue, mets yt-dlp à jour (`pip install -U yt-dlp`).
+
 ### Format conseillé
 
 - MP4 (H.264 + AAC), **vertical 9:16** (1080×1920), 4 Go maximum.

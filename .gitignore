@@ -11,3 +11,4 @@ input/*
 done/
 state/*
 !state/.gitkeep
+cookies*.txt

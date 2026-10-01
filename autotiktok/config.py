@@ -35,6 +35,15 @@ DEFAULTS: dict = {
         "after_publish": "move",
         "max_attempts": 3,
     },
+    "fetch": {
+        "pool_file": "account_pools.txt",
+        "cookies_file": "cookies_browse.txt",
+        "index_file": "state/index.json",
+        "min_views": 1_000_000,
+        "max_reels_per_account": 0,
+        "request_delay": [3, 6],
+        "user_agent": "",
+    },
 }
 
 
@@ -68,6 +77,13 @@ def load_config(path: Path) -> dict:
         raise ConfigError("queue.after_publish doit valoir 'move' ou 'delete'.")
     if config["queue"]["order"] not in ("alphabetical", "random"):
         raise ConfigError("queue.order doit valoir 'alphabetical' ou 'random'.")
+    fetch = config["fetch"]
+    for key in ("min_views", "max_reels_per_account"):
+        if not isinstance(fetch[key], int) or fetch[key] < 0:
+            raise ConfigError(f"fetch.{key} doit être un entier positif ou nul.")
+    delay = fetch["request_delay"]
+    if not (isinstance(delay, list) and len(delay) == 2 and 0 <= delay[0] <= delay[1]):
+        raise ConfigError("fetch.request_delay doit être [min, max] en secondes, par exemple [3, 6].")
     unknown = set(config["platforms"]) - set(PLATFORMS)
     if unknown:
         raise ConfigError(f"Plateformes inconnues dans 'platforms' : {', '.join(sorted(unknown))}.")
