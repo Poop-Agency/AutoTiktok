@@ -8,6 +8,7 @@ from __future__ import annotations
 import http.cookiejar
 import json
 import random
+import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,6 +17,12 @@ from urllib.parse import urlparse
 from .queue import now_iso
 
 FETCHED_FILE = Path("state/fetched.jsonl")
+
+# Instagram sometimes answers a download with nothing at all, for a few seconds or minutes. A Reel is only
+# written off as gone once another one has downloaded fine (so the service works), and the run gives up
+# after a few failures instead of going through the whole index.
+DOWNLOAD_RETRY_WAIT_S = 8
+MAX_FAILED_CANDIDATES = 5
 
 
 class FetchError(Exception):
@@ -426,6 +433,7 @@ def fetch_next(
     dry_run: bool = False,
     ydl_factory: Callable[[dict], object] = _default_ydl,
     rng: random.Random | None = None,
+    sleep: Callable[[float], None] = time.sleep,
 ) -> int:
     """Pick a random Reel of the index never downloaded before and put it in ``input/``."""
     from yt_dlp.utils import DownloadError  # noqa: PLC0415
@@ -449,6 +457,7 @@ def fetch_next(
 
     cookies_path = root / settings["cookies_file"]
     input_dir = root / config["queue"]["input_dir"]
+    failed: list[tuple[str, dict]] = []
     for reel_id, entry in candidates:
         _log(f"Reel {reel_id} : {entry['views']} vues, compte {entry['account']} ({entry['url']})")
         if dry_run:
@@ -466,14 +475,31 @@ def fetch_next(
         }
         if cookies_path.is_file():
             options["cookiefile"] = str(cookies_path)
-        try:
-            with ydl_factory(options) as ydl:
-                ydl.download([entry["url"]])
-        except DownloadError as exc:
-            _log(f"  téléchargement impossible, Reel écarté de l'index : {str(exc)[:300]}")
-            entry["gone"] = True
-            save_index(index_path, index)
+        error = None
+        for attempt in (1, 2):
+            try:
+                with ydl_factory(options) as ydl:
+                    ydl.download([entry["url"]])
+                error = None
+                break
+            except DownloadError as exc:
+                error = exc
+                if attempt == 1:
+                    _log(f"  téléchargement échoué, nouvel essai dans {DOWNLOAD_RETRY_WAIT_S} s : {str(exc)[:200]}")
+                    sleep(DOWNLOAD_RETRY_WAIT_S)
+        if error is not None:
+            _log(f"  téléchargement impossible : {str(error)[:300]}")
+            failed.append((reel_id, entry))
+            if len(failed) >= MAX_FAILED_CANDIDATES:
+                break
             continue
+
+        # This one downloaded: the service works, so the Reels that failed before are really unavailable.
+        if failed:
+            for failed_id, failed_entry in failed:
+                failed_entry["gone"] = True
+                _log(f"  Reel {failed_id} écarté de l'index (indisponible).")
+            save_index(index_path, index)
 
         if entry.get("caption"):
             target.with_suffix(".txt").write_text(entry["caption"] + "\n", encoding="utf-8")
@@ -491,5 +517,8 @@ def fetch_next(
         _log(f"Téléchargé : {target.name}")
         return 0
 
-    _log("Aucun Reel de l'index n'a pu être téléchargé.")
+    _log(
+        f"Aucun Reel n'a pu être téléchargé ({len(failed)} échec(s)) : Instagram bloque peut-être le serveur "
+        "pour l'instant. Aucun Reel n'est écarté de l'index, réessaie plus tard."
+    )
     return 1

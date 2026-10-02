@@ -58,10 +58,11 @@ def graphql(edges, has_next=None):
 
 
 class FakeYDL:
-    def __init__(self, input_dir, downloads, failing=()):
+    def __init__(self, input_dir, downloads, failing=(), flaky=None):
         self.input_dir = input_dir
         self.downloads = downloads
         self.failing = failing
+        self.flaky = flaky if flaky is not None else {}
 
     def __enter__(self):
         return self
@@ -73,12 +74,20 @@ class FakeYDL:
         code = urls[0].rstrip("/").rsplit("/", 1)[1]
         if code in self.failing:
             raise DownloadError("Video unavailable")
+        if self.flaky.get(code, 0) > 0:  # fails the first N times, then works
+            self.flaky[code] -= 1
+            raise DownloadError("Failed to parse JSON")
         self.downloads.append(urls[0])
         (self.input_dir / f"ig_{code}.mp4").write_bytes(b"x")
 
 
-def ydl_factory(input_dir, downloads, failing=()):
-    return lambda _opts: FakeYDL(input_dir, downloads, failing)
+def ydl_factory(input_dir, downloads, failing=(), flaky=None):
+    flaky = flaky if flaky is not None else {}
+    return lambda _opts: FakeYDL(input_dir, downloads, failing, flaky)
+
+
+def no_wait(_seconds):
+    pass
 
 
 def entry(reel_id, views=2_000_000, account="a", **extra):
@@ -360,3 +369,33 @@ def test_refresh_index_stops_on_a_malformed_pool(project, config):
     lister = RecordingLister({})
     assert refresh_index(project, config, lister=lister) == 1
     assert lister.asked == []
+
+
+def test_fetch_next_retries_a_failed_download_once(project, config):
+    write_index(project, config, {"ok": entry("ok")})
+    downloads = []
+    factory = ydl_factory(project / "input", downloads, flaky={"ok": 1})
+    assert fetcher.fetch_next(project, config, ydl_factory=factory, sleep=no_wait) == 0
+    assert downloads == ["https://www.instagram.com/reel/ok/"]
+    assert load_index(project / config["fetch"]["index_file"])["reels"]["ok"].get("gone") is None
+
+
+def test_fetch_next_does_not_write_reels_off_when_nothing_downloads(project, config):
+    write_index(project, config, {f"r{i}": entry(f"r{i}") for i in range(8)})
+    downloads = []
+    factory = ydl_factory(project / "input", downloads, failing=tuple(f"r{i}" for i in range(8)))
+    assert fetcher.fetch_next(project, config, ydl_factory=factory, sleep=no_wait) == 1
+    reels = load_index(project / config["fetch"]["index_file"])["reels"]
+    assert not any(r.get("gone") for r in reels.values())  # an outage must not empty the index
+    assert not (project / FETCHED_FILE).exists()
+
+
+def test_fetch_next_only_writes_off_reels_once_another_one_downloads(project, config):
+    write_index(project, config, {"dead": entry("dead"), "ok": entry("ok")})
+    factory = ydl_factory(project / "input", [], failing=("dead",))
+    # Draw order is forced: "dead" first, then "ok".
+    rng = type("Fixed", (), {"shuffle": staticmethod(lambda items: items.sort(key=lambda item: item[0]))})()
+    assert fetcher.fetch_next(project, config, ydl_factory=factory, rng=rng, sleep=no_wait) == 0
+    reels = load_index(project / config["fetch"]["index_file"])["reels"]
+    assert reels["dead"]["gone"] is True
+    assert reels["ok"].get("gone") is None
