@@ -7,6 +7,7 @@ account (``upload.cookies_file``), the same way the browsing account is read by 
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 from .fetcher import FETCHED_FILE, FetchError, fetch_next, load_cookies, playwright_cookies
@@ -15,7 +16,11 @@ from .queue import Archive, caption_for, file_sha256, finish_video, list_videos,
 
 PLATFORM = "instagram"
 PROFILE_SETTLE_MS = 6000
-POLL_INTERVAL_S = 30
+DIALOG_POLL_S = 5
+CONFIRM_POLL_S = 10
+CONFIRM_ATTEMPTS = 6
+RECENT_REELS = 6  # a new Reel shows up among the first tiles of the profile
+FAILURE_PHRASES = ("couldn't be shared", "could not be shared", "went wrong", "try again", "failed", "error")
 
 
 class UploadError(Exception):
@@ -28,6 +33,35 @@ class UploadUncertain(UploadError):
 
 def _log(message: str) -> None:
     print(message, flush=True)
+
+
+def parse_post_count(header: str) -> int | None:
+    """``"... | 31 posts | 2 followers ..."`` -> 31."""
+    match = re.search(r"([\d.,\s]+)\s*posts?\b", header)
+    digits = re.sub(r"\D", "", match.group(1)) if match else ""
+    return int(digits) if digits else None
+
+
+def new_reel(before: set[str], after: list[str], posts_before: int | None, posts_after: int | None) -> str | None:
+    """The Reel that appeared on the profile, from the tiles before and after (newest tile first).
+
+    Only the first tiles count: the grid loads lazily, so older Reels that were simply not loaded the first
+    time must not be taken for a new one. When both post counts are known, the count must have grown.
+    """
+    if posts_before is not None and posts_after is not None and posts_after <= posts_before:
+        return None
+    return next((href for href in after[:RECENT_REELS] if href not in before), None)
+
+
+def share_failure(dialog_text: str) -> str | None:
+    """The text of Instagram's dialog when it reports that the post failed (None otherwise)."""
+    lowered = dialog_text.lower()
+    return dialog_text.strip() if any(phrase in lowered for phrase in FAILURE_PHRASES) else None
+
+
+def share_confirmed(dialog_text: str) -> bool:
+    """Instagram's dialog says the Reel was shared (and not that it could not be)."""
+    return share_failure(dialog_text) is None and re.search(r"\bshared\b", dialog_text.lower()) is not None
 
 
 def cookies_problem(path: Path) -> str | None:
@@ -53,11 +87,13 @@ class BrowserUploader:
         executable_path: str = "",
         headless: bool = True,
         share_timeout: float = 240,
+        debug_dir: Path | None = None,
     ):
         self.cookies = cookies
         self.executable_path = executable_path
         self.headless = headless
         self.share_timeout = share_timeout
+        self.debug_dir = debug_dir
 
     def __enter__(self) -> BrowserUploader:
         from playwright.sync_api import sync_playwright  # noqa: PLC0415
@@ -97,12 +133,33 @@ class BrowserUploader:
             raise UploadError("Profil du compte d'upload introuvable : la session est-elle connectée ?")
         return href
 
-    def _profile_reels(self, profile_path: str) -> set[str]:
+    def _profile_state(self, profile_path: str) -> tuple[list[str], int | None]:
+        """The Reel tiles of the profile (newest first, as displayed) and its post count."""
         page = self._page
         page.goto(f"https://www.instagram.com{profile_path}reels/", wait_until="domcontentloaded")
         page.wait_for_timeout(PROFILE_SETTLE_MS)
-        links = page.locator('a[href*="/reel/"]').all()
-        return {href for link in links if (href := link.get_attribute("href"))}
+        hrefs = [href for link in page.locator('a[href*="/reel/"]').all() if (href := link.get_attribute("href"))]
+        header = page.locator("header").first
+        return list(dict.fromkeys(hrefs)), parse_post_count(header.inner_text()) if header.count() else None
+
+    def _dialog_text(self) -> str:
+        dialog = self._page.locator("div[role=dialog]")
+        try:
+            return dialog.last.inner_text(timeout=2000) if dialog.count() else ""
+        except Exception:  # noqa: BLE001 - the dialog may close while it is being read
+            return ""
+
+    def _save_debug(self, note: str) -> None:
+        """Keep a screenshot and the dialog text of a failed upload, to understand what Instagram showed."""
+        if not self.debug_dir:
+            return
+        try:
+            self.debug_dir.mkdir(parents=True, exist_ok=True)
+            self._page.screenshot(path=str(self.debug_dir / "upload_failure.png"))
+            (self.debug_dir / "upload_failure.txt").write_text(f"{note}\n\n{self._dialog_text()}\n", encoding="utf-8")
+            _log(f"Capture de l'écran d'Instagram : {self.debug_dir / 'upload_failure.png'}")
+        except Exception:  # noqa: BLE001 - debugging aid, never the cause of a failure
+            pass
 
     def _compose(self, video: Path, caption: str, cover: Path | None) -> None:
         """Walk the "new post" dialog up to the details page (caption filled, cover set), without sharing."""
@@ -152,6 +209,13 @@ class BrowserUploader:
 
     def upload(self, video: Path, caption: str, cover: Path | None = None) -> dict:
         """Publish ``video`` as a Reel. Returns ``{"url": ..., "username": ...}``."""
+        try:
+            return self._upload(video, caption, cover)
+        except UploadError as exc:
+            self._save_debug(str(exc))
+            raise
+
+    def _upload(self, video: Path, caption: str, cover: Path | None) -> dict:
         from playwright.sync_api import TimeoutError as PlaywrightTimeout  # noqa: PLC0415
 
         page = self._page
@@ -161,7 +225,8 @@ class BrowserUploader:
             raise UploadError("Instagram demande de se connecter : cookies du compte d'upload expirés.")
         self._dismiss_popups()
         profile_path = self._profile_path()
-        before = self._profile_reels(profile_path)
+        tiles_before, posts_before = self._profile_state(profile_path)
+        before = set(tiles_before)
 
         self._compose(video, caption, cover)
         try:
@@ -169,20 +234,29 @@ class BrowserUploader:
         except PlaywrightTimeout as exc:
             raise UploadError(f"Bouton « Share » introuvable, rien n'a été publié : {str(exc)[:200]}") from exc
 
-        # Closing the browser while Instagram says "Sharing" can cancel the post: wait until the
-        # Reel shows up on the profile.
+        # Closing the browser while Instagram says "Sharing" cancels the post: stay on the dialog until
+        # Instagram confirms, reports a failure, or the delay runs out.
         waited = 0.0
         while waited < self.share_timeout:
-            page.wait_for_timeout(POLL_INTERVAL_S * 1000)
-            waited += POLL_INTERVAL_S
-            new = self._profile_reels(profile_path) - before
-            if new:
-                reel = sorted(new)[0]
+            page.wait_for_timeout(DIALOG_POLL_S * 1000)
+            waited += DIALOG_POLL_S
+            text = self._dialog_text()
+            failure = share_failure(text)
+            if failure:
+                raise UploadError(f"Instagram a refusé la publication : {failure[:300]!r}")
+            if share_confirmed(text) or not text:
+                break
+
+        # Confirm on the profile (and get the URL of the new Reel).
+        for _ in range(CONFIRM_ATTEMPTS):
+            tiles_after, posts_after = self._profile_state(profile_path)
+            reel = new_reel(before, tiles_after, posts_before, posts_after)
+            if reel:
                 return {"url": f"https://www.instagram.com{reel}", "username": profile_path.strip("/")}
-            page.goto("https://www.instagram.com/", wait_until="domcontentloaded")
+            page.wait_for_timeout(CONFIRM_POLL_S * 1000)
         raise UploadUncertain(
-            f"Le Reel n'est pas apparu sur le profil après {int(self.share_timeout)} s : il est peut-être publié. "
-            "Vérifie le profil avant de relancer."
+            f"Le Reel n'est pas apparu sur le profil (avant : {posts_before} posts) : il n'est peut-être pas publié, "
+            "ou Instagram le traite encore. Vérifie le profil avant de relancer."
         )
 
 
@@ -283,6 +357,7 @@ def post_next(
         executable_path=settings["browser_path"],
         headless=settings["headless"],
         share_timeout=settings["share_timeout"],
+        debug_dir=root / "logs",
     )
     try:
         with uploader:

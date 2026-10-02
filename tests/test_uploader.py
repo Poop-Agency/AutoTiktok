@@ -185,3 +185,54 @@ def test_post_next_empty_caption_file_falls_back_to_the_usual_caption(project, c
     fake = FakeUploader()
     assert run(project, config, fake, []) == 0
     assert fake.uploads == [("ig_SRC1.mp4", "Trop drôle #funny #humour #fyp")]
+
+
+@pytest.mark.parametrize(
+    ("header", "expected"),
+    [
+        ("Note... | triple.t.polyester | 31 posts | 2 followers | 4 following", 31),
+        ("name | 1 post | 0 followers", 1),
+        ("name | 1,234 posts | 9 followers", 1234),
+        ("name | no counter here", None),
+    ],
+)
+def test_parse_post_count(header, expected):
+    assert uploader.parse_post_count(header) == expected
+
+
+def test_new_reel_needs_a_new_tile_and_a_bigger_post_count():
+    before = {"/a/reel/OLD1/", "/a/reel/OLD2/"}
+    after = ["/a/reel/NEW1/", "/a/reel/OLD1/", "/a/reel/OLD2/"]
+    assert uploader.new_reel(before, after, 31, 32) == "/a/reel/NEW1/"
+    assert uploader.new_reel(before, after, None, None) == "/a/reel/NEW1/"  # counter unreadable: tiles decide
+    assert uploader.new_reel(before, after, 31, 31) is None  # the count did not grow: nothing was published
+    assert uploader.new_reel(before, after[1:], 31, 32) is None  # no new tile
+
+
+def test_new_reel_ignores_older_reels_that_were_just_not_loaded_before():
+    first_load = [f"/a/reel/R{i}/" for i in range(12)]
+    before = set(first_load)
+    scrolled_further = [*first_load, *[f"/a/reel/OLDER{i}/" for i in range(20)]]
+    assert uploader.new_reel(before, scrolled_further, 31, 32) is None  # only older Reels appeared: not a new post
+    published = ["/a/reel/FRESH/", *scrolled_further]
+    assert uploader.new_reel(before, published, 31, 32) == "/a/reel/FRESH/"  # the newest tile, not the first by name
+
+
+@pytest.mark.parametrize(
+    ("text", "failed"),
+    [
+        ("Sharing", False),
+        ("Reel shared | Your reel has been shared.", False),
+        ("Your post couldn't be shared. Try again.", True),
+        ("Something went wrong", True),
+        ("", False),
+    ],
+)
+def test_share_failure(text, failed):
+    assert (uploader.share_failure(text) is not None) is failed
+
+
+def test_share_confirmed():
+    assert uploader.share_confirmed("Your reel has been shared.")
+    assert not uploader.share_confirmed("Sharing")
+    assert not uploader.share_confirmed("Your post couldn't be shared")  # failure text is checked first anyway
