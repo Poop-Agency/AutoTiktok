@@ -140,7 +140,7 @@ class BrowserUploader:
                 page.get_by_role("button", name="Next").first.click(timeout=20000)
                 page.wait_for_timeout(4000)
             if caption:
-                page.locator('div[aria-label="Write a caption..."]').first.fill(caption)
+                page.locator('div[role="textbox"][aria-label*="caption" i]').first.fill(caption)
                 page.wait_for_timeout(500)
             page.get_by_role("button", name="Share").first.click(timeout=15000)
         except PlaywrightTimeout as exc:
