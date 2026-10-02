@@ -256,7 +256,7 @@ Compte sur lequel `post-next` publie (le compte « bestof »).
 |---|---|---|
 | `cookies_file` | `cookies_upload.txt` | cookies (format Netscape) **de ce compte**, avec au minimum `sessionid`. Jamais dans git |
 | `caption_file` | `""` | fichier texte (`legende.txt`) dont le contenu est la légende de **chaque** publication, tel quel (retours à la ligne et hashtags compris). Vide = légende d'origine du Reel + `caption.hashtags` |
-| `cover_file` | `""` | image (`cover.jpg`) envoyée comme miniature de chaque Reel. Vide = Instagram prend la première image de la vidéo. Format conseillé : 1080×1920 (9:16) |
+| `cover_file` | `""` | image (`assets/miniature_spiderman.png`) envoyée comme miniature de chaque Reel. Vide = Instagram prend la première image de la vidéo. Format conseillé : 1080×1920 (9:16) |
 | `browser_path` | `""` | chemin d'un Chromium. Vide = celui installé par `playwright install chromium` |
 | `headless` | `true` | `false` affiche le navigateur : utile pour voir une publication bloquée |
 | `share_timeout` | `240` | secondes d'attente maximum pour que le Reel apparaisse sur le profil après « Share » |
@@ -291,7 +291,7 @@ fetch:            # exemple : mises à jour rapides, 150 Reels récents par comp
 | `cookies_browse.txt` | cookies du compte jetable, qui sert à lister et à télécharger | **non** |
 | `cookies_upload.txt` | cookies du compte « bestof », sur lequel `post-next` publie | **non** |
 | `legende.txt` | légende reprise à chaque publication de `post-next` | oui |
-| `cover.jpg` | miniature de chaque Reel publié par `post-next` | oui |
+| `assets/miniature_spiderman.png` | miniature de chaque Reel publié par `post-next` (`upload.cover_file`) | oui |
 | `.env` | `TOKENS_KEY` et clés des API TikTok / YouTube / Instagram | **non** |
 | `state/index.json` | liste des Reels au-dessus du seuil, et comptes déjà listés | non |
 | `state/fetched.jsonl` | URL de chaque Reel téléchargé (jamais repris) | non |
@@ -310,6 +310,6 @@ fetch:            # exemple : mises à jour rapides, 150 Reels récents par comp
 | `X n'est pas dans le pool` | ajoute le compte à `account_pools.txt` avant `--account` |
 | `Aucun nouveau compte à lister` | normal : `--new` n'a rien à faire, tous les comptes sont déjà dans l'index |
 | `Aucun Reel disponible dans l'index` | lance d'abord `refresh-index`, ou tous les Reels de l'index ont déjà été pris |
-| `Configuration incomplète, aucun Reel téléchargé` | `cookies_upload.txt` est absent ou sans `sessionid` (colle-y l'export des cookies du compte d'upload), ou `legende.txt` / `cover.jpg` est configuré mais absent |
+| `Configuration incomplète, aucun Reel téléchargé` | `cookies_upload.txt` est absent ou sans `sessionid` (colle-y l'export des cookies du compte d'upload), ou `legende.txt` / la miniature est configuré mais absent |
 | `Instagram demande de se connecter : cookies du compte d'upload expirés` | ré-exporte les cookies du compte d'upload |
 | `Interface d'Instagram inattendue, rien n'a été publié` | Instagram a changé son site : lance avec `upload.headless: false` pour voir où ça bloque |
