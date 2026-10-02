@@ -234,6 +234,26 @@ python -m autotiktok keygen
 
 ---
 
+## Mettre le serveur à jour
+
+Depuis ton ordinateur, dans le dossier du projet :
+
+```bash
+scripts/deploy.sh                  # copie le code et les réglages, puis met à jour les dépendances
+scripts/deploy.sh --dry-run        # montre ce qui serait copié, sans rien envoyer
+scripts/deploy.sh --with-cookies   # copie aussi cookies_browse.txt et cookies_upload.txt
+```
+
+- **Copié :** le code, `config.yaml`, `legende.txt`, `account_pools.json`, `assets/`, la documentation et les scripts.
+- **Jamais copié :** `state/` (la liste des Reels, les Reels déjà pris et l'archive vivent sur le serveur), `input/`, `logs/`,
+  `.env`, `.venv` et `.git`. Les cookies ne sont copiés qu'avec `--with-cookies`.
+- Le cron du serveur n'est pas modifié : il continue de lancer `scripts/run.sh` à 11:47 et 17:47 UTC.
+- Pour changer la liste des Reels sur le serveur, lance `refresh-index` **sur le serveur** :
+  `ssh -i ~/.ssh/id_ed25519 ubuntu@141.253.101.226 'cd AutoTiktok && .venv/bin/python -m autotiktok refresh-index --new'`.
+- Serveur, clé et dossier se règlent avec `AUTOTIKTOK_SERVER`, `AUTOTIKTOK_SSH_KEY` et `AUTOTIKTOK_REMOTE_DIR`.
+
+---
+
 ## Réglages de `config.yaml`
 
 Tout est optionnel : une valeur absente prend sa valeur par défaut (indiquée ci-dessous).
