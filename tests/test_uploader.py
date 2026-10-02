@@ -18,6 +18,7 @@ class FakeUploader:
     def __init__(self, error=None):
         self.error = error
         self.uploads = []
+        self.covers = []
 
     def __enter__(self):
         return self
@@ -25,10 +26,11 @@ class FakeUploader:
     def __exit__(self, *exc):
         return False
 
-    def upload(self, video, caption):
+    def upload(self, video, caption, cover=None):
         if self.error:
             raise self.error
         self.uploads.append((video.name, caption))
+        self.covers.append(cover)
         return {"url": REEL_URL, "username": "triple.t.polyester"}
 
 
@@ -143,3 +145,43 @@ def test_post_next_stops_when_the_index_is_empty(project, config):
     (project / config["fetch"]["index_file"]).unlink()
     assert run(project, config, FakeUploader(), []) == 1
     assert uploader  # module imported
+
+
+def test_post_next_uses_the_caption_file_for_every_post(project, config):
+    (project / "legende.txt").write_text("Le meilleur de l'internet 🔥\n#bestof\n", encoding="utf-8")
+    config["upload"]["caption_file"] = "legende.txt"
+    fake = FakeUploader()
+    assert run(project, config, fake, []) == 0
+    # The file replaces the original caption and the config hashtags, line breaks included.
+    assert fake.uploads == [("ig_SRC1.mp4", "Le meilleur de l'internet 🔥\n#bestof")]
+
+
+def test_post_next_sends_the_cover_image(project, config):
+    (project / "cover.jpg").write_bytes(b"jpg")
+    config["upload"]["cover_file"] = "cover.jpg"
+    fake = FakeUploader()
+    assert run(project, config, fake, []) == 0
+    assert fake.covers == [project / "cover.jpg"]
+
+
+def test_post_next_without_cover_setting_sends_none(project, config):
+    fake = FakeUploader()
+    assert run(project, config, fake, []) == 0
+    assert fake.covers == [None]
+
+
+@pytest.mark.parametrize("key", ["cover_file", "caption_file"])
+def test_post_next_stops_before_downloading_when_a_configured_file_is_missing(project, config, key):
+    config["upload"][key] = "absent.txt"
+    downloads = []
+    assert run(project, config, FakeUploader(), downloads) == 1
+    assert downloads == []
+    assert not (project / FETCHED_FILE).exists()
+
+
+def test_post_next_empty_caption_file_falls_back_to_the_usual_caption(project, config):
+    (project / "legende.txt").write_text("  \n", encoding="utf-8")
+    config["upload"]["caption_file"] = "legende.txt"
+    fake = FakeUploader()
+    assert run(project, config, fake, []) == 0
+    assert fake.uploads == [("ig_SRC1.mp4", "Trop drôle #funny #humour #fyp")]

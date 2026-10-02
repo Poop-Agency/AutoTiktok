@@ -42,6 +42,8 @@ queue:
 # Compte sur lequel `post-next` publie (le compte « bestof »), par le site web d'Instagram.
 upload:
   cookies_file: cookies_upload.txt # cookies (format Netscape) de CE compte, avec sessionid (jamais dans git)
+  caption_file: legende.txt        # texte repris comme légende de CHAQUE publication ("" = légende d'origine + hashtags de `caption`)
+  cover_file: cover.jpg            # image utilisée comme miniature de chaque Reel ("" = Instagram prend la 1re image de la vidéo)
   browser_path: ""                 # vide = Chromium installé par `playwright install chromium`
   headless: true                   # false : affiche le navigateur
   share_timeout: 240               # secondes d'attente maximum pour que le Reel apparaisse sur le profil

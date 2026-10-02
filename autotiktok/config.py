@@ -37,6 +37,8 @@ DEFAULTS: dict = {
     },
     "upload": {
         "cookies_file": "cookies_upload.txt",
+        "caption_file": "",
+        "cover_file": "",
         "browser_path": "",
         "headless": True,
         "share_timeout": 240,

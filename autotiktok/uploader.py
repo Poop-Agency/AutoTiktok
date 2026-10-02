@@ -104,19 +104,11 @@ class BrowserUploader:
         links = page.locator('a[href*="/reel/"]').all()
         return {href for link in links if (href := link.get_attribute("href"))}
 
-    def upload(self, video: Path, caption: str) -> dict:
-        """Publish ``video`` as a Reel. Returns ``{"url": ..., "username": ...}``."""
+    def _compose(self, video: Path, caption: str, cover: Path | None) -> None:
+        """Walk the "new post" dialog up to the details page (caption filled, cover set), without sharing."""
         from playwright.sync_api import TimeoutError as PlaywrightTimeout  # noqa: PLC0415
 
         page = self._page
-        page.goto("https://www.instagram.com/", wait_until="domcontentloaded")
-        page.wait_for_timeout(5000)
-        if "/accounts/login" in page.url:
-            raise UploadError("Instagram demande de se connecter : cookies du compte d'upload expirés.")
-        self._dismiss_popups()
-        profile_path = self._profile_path()
-        before = self._profile_reels(profile_path)
-
         page.goto("https://www.instagram.com/", wait_until="domcontentloaded")
         page.wait_for_timeout(4000)
         self._dismiss_popups()
@@ -136,15 +128,40 @@ class BrowserUploader:
             if ok.count():
                 ok.first.click()
                 page.wait_for_timeout(1500)
-            for _ in range(2):  # crop, then edit
-                page.get_by_role("button", name="Next").first.click(timeout=20000)
+            page.get_by_role("button", name="Next").first.click(timeout=20000)  # crop -> edit
+            page.wait_for_timeout(4000)
+            if cover:
+                # The edit page has a "Cover photo" block with its own "Select from computer" button.
+                with page.expect_file_chooser(timeout=15000) as chooser:
+                    page.get_by_role("button", name="Select from computer").click()
+                chooser.value.set_files(str(cover))
                 page.wait_for_timeout(4000)
+            page.get_by_role("button", name="Next").first.click(timeout=20000)  # edit -> details
+            page.wait_for_timeout(4000)
             if caption:
                 page.locator('div[role="textbox"][aria-label*="caption" i]').first.fill(caption)
                 page.wait_for_timeout(500)
-            page.get_by_role("button", name="Share").first.click(timeout=15000)
         except PlaywrightTimeout as exc:
             raise UploadError(f"Interface d'Instagram inattendue, rien n'a été publié : {str(exc)[:200]}") from exc
+
+    def upload(self, video: Path, caption: str, cover: Path | None = None) -> dict:
+        """Publish ``video`` as a Reel. Returns ``{"url": ..., "username": ...}``."""
+        from playwright.sync_api import TimeoutError as PlaywrightTimeout  # noqa: PLC0415
+
+        page = self._page
+        page.goto("https://www.instagram.com/", wait_until="domcontentloaded")
+        page.wait_for_timeout(5000)
+        if "/accounts/login" in page.url:
+            raise UploadError("Instagram demande de se connecter : cookies du compte d'upload expirés.")
+        self._dismiss_popups()
+        profile_path = self._profile_path()
+        before = self._profile_reels(profile_path)
+
+        self._compose(video, caption, cover)
+        try:
+            page.get_by_role("button", name="Share").first.click(timeout=15000)
+        except PlaywrightTimeout as exc:
+            raise UploadError(f"Bouton « Share » introuvable, rien n'a été publié : {str(exc)[:200]}") from exc
 
         # Closing the browser while Instagram says "Sharing" can cancel the post: wait until the
         # Reel shows up on the profile.
@@ -176,6 +193,32 @@ def _source_of(root: Path, filename: str) -> dict:
     return {}
 
 
+def _optional_file(root: Path, name: str) -> Path | None:
+    return root / name if name else None
+
+
+def _upload_problem(root: Path, settings: dict) -> str | None:
+    """Why the upload cannot start yet (cookies, cover image, caption file)."""
+    problem = cookies_problem(root / settings["cookies_file"])
+    if problem:
+        return problem
+    for key, label in (("cover_file", "miniature"), ("caption_file", "légende")):
+        path = _optional_file(root, settings[key])
+        if path and not path.is_file():
+            return (
+                f"{settings[key]} introuvable (fichier de {label}) : crée-le, ou vide `upload.{key}` "
+                "dans config.yaml pour ne pas l'utiliser."
+            )
+    return None
+
+
+def caption_of(video: Path, config: dict, root: Path) -> str:
+    """The text of ``upload.caption_file`` when set (the same for every post), else the usual caption."""
+    path = _optional_file(root, config["upload"]["caption_file"])
+    text = path.read_text(encoding="utf-8").strip() if path else ""
+    return text or caption_for(video, config)
+
+
 def post_next(
     root: Path,
     config: dict,
@@ -193,13 +236,13 @@ def post_next(
     if dry_run:
         if waiting:
             _log(f"Prochaine vidéo : {waiting[0].name} (déjà dans input/, pas de nouveau téléchargement).")
-            _log(f"Légende : {caption_for(waiting[0], config)!r}")
+            _log(f"Légende : {caption_of(waiting[0], config, root)!r}")
             return 0
         return fetch_next(root, config, dry_run=True, **fetch_kwargs)
 
     cookies_path = root / settings["cookies_file"]
     # A setup problem must not burn a Reel: check the upload account before downloading anything.
-    problem = cookies_problem(cookies_path)
+    problem = _upload_problem(root, settings)
     if problem:
         _log(f"Configuration incomplète, aucun Reel téléchargé : {problem}")
         return 1
@@ -223,8 +266,12 @@ def post_next(
         _log(f"{video.name} a déjà été publiée (même fichier dans l'archive) : ignorée ({disposition}).")
         return 0
 
-    caption = caption_for(video, config)
-    _log(f"Vidéo : {video.name} ({video.stat().st_size / 1e6:.1f} Mo) – légende : {caption!r}")
+    caption = caption_of(video, config, root)
+    cover = _optional_file(root, settings["cover_file"])
+    _log(
+        f"Vidéo : {video.name} ({video.stat().st_size / 1e6:.1f} Mo) – légende : {caption!r}"
+        + (f" – miniature : {cover.name}" if cover else "")
+    )
     uploader = uploader or BrowserUploader(
         load_cookies(cookies_path),
         executable_path=settings["browser_path"],
@@ -233,7 +280,7 @@ def post_next(
     )
     try:
         with uploader:
-            result = uploader.upload(video, caption)
+            result = uploader.upload(video, caption, cover)
     except UploadError as exc:
         _log(f"ERREUR : {exc}")
         _log(f"{video.name} reste dans input/.")
