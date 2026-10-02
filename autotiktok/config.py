@@ -44,7 +44,7 @@ DEFAULTS: dict = {
         "share_timeout": 240,
     },
     "fetch": {
-        "pool_file": "account_pools.txt",
+        "pool_file": "account_pools.json",
         "cookies_file": "cookies_browse.txt",
         "index_file": "state/index.json",
         "min_views": 1_000_000,

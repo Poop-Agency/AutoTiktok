@@ -51,10 +51,10 @@ upload:
 # Reels des comptes du pool (comptes à toi ou autorisés uniquement).
 # `refresh-index` liste leurs Reels populaires, `post-next` en télécharge un et le publie.
 fetch:
-  pool_file: account_pools.txt     # un profil Instagram par ligne
+  pool_file: account_pools.json    # comptes à lister, avec un seuil de vues optionnel par compte
   cookies_file: cookies_browse.txt # cookies (format Netscape) du compte Instagram jetable qui sert à lister (jamais dans git)
   index_file: state/index.json     # liste des Reels à plus de min_views vues
-  min_views: 1000000
+  min_views: 1000000               # seuil par défaut ; le seuil d'un compte dans le pool passe avant, puis --min-views
   max_reels_per_account: 0         # 0 = tous les Reels du compte
   request_delay: [3, 6]            # pause aléatoire (secondes) entre deux défilements de la page
   browser_path: ""                 # vide = Chromium installé par `playwright install chromium`

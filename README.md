@@ -162,15 +162,16 @@ En mode brouillon, TikTok ignore la légende : tu l'écris au moment de publier 
 
 Deux commandes, qui se partagent un index (`state/index.json`) :
 
-1. **`python -m autotiktok refresh-index`** lit tous les Reels des profils de `account_pools.txt` (un profil Instagram par ligne)
-   et note dans l'index ceux qui dépassent `fetch.min_views` vues (1 million par défaut). Il n'y a pas de requête par vidéo,
+1. **`python -m autotiktok refresh-index`** lit tous les Reels des profils de `account_pools.json` (un compte par entrée, avec un seuil de vues
+   optionnel) et note dans l'index ceux qui dépassent le seuil (1 million par défaut, voir `fetch.min_views`). Il n'y a pas de requête par vidéo,
    mais des pauses de quelques secondes entre les requêtes (`fetch.request_delay`) : compte une dizaine de minutes pour quelques comptes.
    À relancer à la main de temps en temps, pour rattraper les Reels qui passent la barre du million. Un 429 d'Instagram
    arrête proprement la commande : ce qui est déjà trouvé est gardé.
    Options :
-   - `--new` : seulement les comptes que l'index n'a jamais listés (pratique quand tu ajoutes des comptes à `account_pools.txt`) ;
+   - `--new` : seulement les comptes que l'index n'a jamais listés (pratique quand tu ajoutes des comptes à `account_pools.json`) ;
    - `--account NOM` : seulement ce compte (nom ou URL du profil, il doit être dans le pool) ;
    - `--min-views N` : seuil de vues pour cette fois, à la place de `fetch.min_views` (par exemple `--min-views 100000`).
+     Le seuil écrit pour un compte dans `account_pools.json` passe toujours avant (ordre : compte, commande, `config.yaml`).
      Baisser le seuil ne retrouve pas les Reels des comptes déjà listés : relance-les avec `--account NOM --min-views N`.
 2. **`python -m autotiktok post-next`** tire dans l'index un Reel jamais pris, le télécharge dans `input/` avec sa légende,
    le publie sur le **compte d'upload** (compte « bestof »), supprime le fichier et l'ajoute à l'archive.

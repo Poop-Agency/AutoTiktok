@@ -9,6 +9,7 @@ import http.cookiejar
 import json
 import random
 from collections.abc import Callable, Iterator
+from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -32,17 +33,58 @@ def _log(message: str) -> None:
 # --- the pool and the cookies of the browsing account --------------------------------------------
 
 
-def read_pool(path: Path) -> list[str]:
-    """Profile URLs from the pool file, one per line (blank lines and ``#`` comments ignored)."""
-    if not Path(path).is_file():
+@dataclass(frozen=True)
+class PoolAccount:
+    username: str
+    min_views: int | None = None  # this account's own threshold; None = use the command's or config.yaml's
+
+
+def _pool_min_views(value, where: str) -> int | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise FetchError(f"{where} : min_views doit être un entier positif ou nul (ou null), pas {value!r}.")
+    return value
+
+
+def read_pool(path: Path) -> list[PoolAccount]:
+    """Accounts of the pool file.
+
+    ``account_pools.json`` is a list of ``{"account": "<profile URL or name>", "min_views": 1000000}``
+    (``min_views`` may be ``null`` or absent). A plain ``.txt`` file (one profile per line, ``#`` for
+    comments) is still read, without per-account thresholds.
+    """
+    path = Path(path)
+    if not path.is_file():
         return []
-    lines = (line.strip() for line in Path(path).read_text(encoding="utf-8").splitlines())
-    return [line for line in lines if line and not line.startswith("#")]
+    if path.suffix.lower() != ".json":
+        lines = (line.strip() for line in path.read_text(encoding="utf-8").splitlines())
+        return [PoolAccount(username_of(line)) for line in lines if line and not line.startswith("#")]
+    try:
+        entries = json.loads(path.read_text(encoding="utf-8"))
+    except ValueError as exc:
+        raise FetchError(f"{path.name} n'est pas un JSON valide : {exc}") from exc
+    if not isinstance(entries, list):
+        raise FetchError(f'{path.name} doit contenir une liste : [{{"account": "...", "min_views": 1000000}}, ...].')
+    pool = []
+    for position, entry in enumerate(entries, start=1):
+        where = f"{path.name}, entrée {position}"
+        if isinstance(entry, str):  # shorthand: just the profile
+            entry = {"account": entry}
+        if not isinstance(entry, dict) or not isinstance(entry.get("account"), str) or not entry["account"].strip():
+            raise FetchError(
+                f'{where} : il faut {{"account": "<URL ou nom du profil>", "min_views": <nombre ou null>}}.'
+            )
+        pool.append(PoolAccount(username_of(entry["account"]), _pool_min_views(entry.get("min_views"), where)))
+    return pool
 
 
-def username_of(profile_url: str) -> str:
-    """``https://www.instagram.com/<user>/`` (with or without trailing slash) -> ``<user>``."""
-    return urlparse(profile_url).path.strip("/").split("/")[0]
+def username_of(profile: str) -> str:
+    """``https://www.instagram.com/<user>/`` (with or without trailing slash), ``@user`` or ``user`` -> ``<user>``."""
+    profile = profile.strip()
+    if "/" not in profile:
+        return profile.lstrip("@")
+    return urlparse(profile).path.strip("/").split("/")[0]
 
 
 def load_cookies(path: Path) -> http.cookiejar.MozillaCookieJar:
@@ -262,19 +304,27 @@ def _default_lister(root: Path, settings: dict) -> BrowserLister | None:
     )
 
 
-def select_accounts(pool: list[str], index: dict, *, only_new: bool = False, account: str | None = None) -> list[str]:
-    """Usernames to list: the whole pool, only the accounts the index has never seen, or a single one."""
-    usernames = [username_of(profile) for profile in pool]
+def select_accounts(
+    pool: list[PoolAccount], index: dict, *, only_new: bool = False, account: str | None = None
+) -> list[PoolAccount]:
+    """The accounts to list: the whole pool, only those the index has never seen, or a single one."""
     if account:
-        wanted = username_of(account).lower() if "/" in account else account.lstrip("@").lower()
-        matches = [u for u in usernames if u.lower() == wanted]
+        wanted = username_of(account).lower()
+        matches = [a for a in pool if a.username.lower() == wanted]
         if not matches:
-            raise FetchError(f"{wanted} n'est pas dans le pool (account_pools.txt).")
+            raise FetchError(f"{wanted} n'est pas dans le pool.")
         return matches[:1]
     if only_new:
         known = set(index.get("accounts", {})) | {e.get("account") for e in index["reels"].values()}
-        return [u for u in usernames if u not in known]
-    return usernames
+        return [a for a in pool if a.username not in known]
+    return list(pool)
+
+
+def effective_min_views(account: PoolAccount, override: int | None, default: int) -> int:
+    """The account's own threshold first, then the command's ``--min-views``, then ``fetch.min_views``."""
+    if account.min_views is not None:
+        return account.min_views
+    return default if override is None else override
 
 
 def refresh_index(
@@ -294,8 +344,11 @@ def refresh_index(
     """
     root = Path(root)
     settings = config["fetch"]
-    threshold = settings["min_views"] if min_views is None else min_views
-    pool = read_pool(root / settings["pool_file"])
+    try:
+        pool = read_pool(root / settings["pool_file"])
+    except FetchError as exc:
+        _log(str(exc))
+        return 1
     if not pool:
         _log(f"Aucun compte dans {settings['pool_file']}.")
         return 1
@@ -316,8 +369,10 @@ def refresh_index(
 
     failures = 0
     with lister:
-        for username in usernames:
-            _log(f"Compte : {username}")
+        for pool_account in usernames:
+            username = pool_account.username
+            threshold = effective_min_views(pool_account, min_views, settings["min_views"])
+            _log(f"Compte : {username} (seuil : {threshold} vues)")
             kept = read = 0
             try:
                 for batch in lister.reels(username):

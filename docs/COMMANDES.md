@@ -11,7 +11,7 @@ Toutes les commandes se lancent depuis le dossier du projet :
 
 | Commande | À quoi elle sert |
 |---|---|
-| [`refresh-index`](#refresh-index) | liste les Reels populaires des comptes de `account_pools.txt` |
+| [`refresh-index`](#refresh-index) | liste les Reels populaires des comptes de `account_pools.json` |
 | [`post-next`](#post-next) | télécharge un Reel de la liste et le publie sur le compte d'upload |
 | [`publish-next`](#publish-next) | publie la prochaine vidéo déjà présente dans `input/` |
 | [`status`](#status) | affiche la file d'attente et les dernières publications |
@@ -36,10 +36,10 @@ python -m autotiktok refresh-index [--new | --account COMPTE] [--min-views N]
 
 | Option | Effet |
 |---|---|
-| *(aucune)* | liste **tous** les comptes de `account_pools.txt` |
+| *(aucune)* | liste **tous** les comptes de `account_pools.json` |
 | `--new` | seulement les comptes que l'index n'a **jamais** listés |
 | `--account COMPTE` | seulement ce compte. Nom (`granny___1`, `@granny___1`) ou URL du profil. Il doit être dans le pool |
-| `--min-views N` | seuil de vues pour cette fois, à la place de `fetch.min_views` de `config.yaml` |
+| `--min-views N` | seuil de vues pour cette fois, à la place de `fetch.min_views` de `config.yaml`. **Un seuil écrit dans `account_pools.json` pour un compte passe avant** (voir [le seuil de vues](#le-seuil-de-vues)) |
 
 `--new` et `--account` s'excluent l'un l'autre. `--min-views` se combine avec les deux.
 
@@ -49,7 +49,7 @@ python -m autotiktok refresh-index [--new | --account COMPTE] [--min-views N]
 # Première fois, ou mise à jour complète : tous les comptes, seuil de config.yaml (1 M par défaut)
 python -m autotiktok refresh-index
 
-# J'ai ajouté 2 comptes à account_pools.txt : ne traiter que ceux-là
+# J'ai ajouté 2 comptes à account_pools.json : ne traiter que ceux-là
 python -m autotiktok refresh-index --new
 
 # Un seul compte, par son nom ou par son URL
@@ -72,6 +72,49 @@ python -m autotiktok refresh-index --account granny___1 --min-views 100000
   suivants, mets `fetch.max_reels_per_account` à 150 : seuls les Reels les plus récents sont relus.
 - **Relancer la commande** met à jour les vues des Reels déjà dans l'index et ajoute ceux qui ont passé le seuil.
   Les entrées existantes ne sont jamais supprimées.
+
+---
+
+## account_pools.json
+
+La liste des comptes à lister. C'est un tableau JSON ; chaque compte peut avoir son propre seuil de vues.
+
+```json
+[
+  { "account": "https://www.instagram.com/vidconsumer/", "min_views": 1000000 },
+  { "account": "https://www.instagram.com/granny___1/",  "min_views": 250000 },
+  { "account": "https://www.instagram.com/alcr/",        "min_views": null },
+  { "account": "kujo__o" }
+]
+```
+
+| Champ | Rôle |
+|---|---|
+| `account` | URL du profil, `@nom` ou `nom` |
+| `min_views` | seuil de ce compte (entier). `null` ou absent = pas de seuil propre |
+
+Écrire juste une chaîne (`"kujo__o"`) revient à un compte sans seuil propre. Un fichier `.txt` (un profil par ligne)
+est encore lu si tu le mets dans `fetch.pool_file`, mais sans seuil par compte. Une erreur dans le fichier
+(JSON invalide, seuil qui n'est pas un nombre) arrête `refresh-index` avec un message, avant tout accès à Instagram.
+
+### Le seuil de vues
+
+Pour chaque compte, `refresh-index` prend **le premier** de ces trois :
+
+1. le `min_views` écrit pour ce compte dans `account_pools.json` (toujours prioritaire) ;
+2. sinon `--min-views N` de la commande ;
+3. sinon `fetch.min_views` de `config.yaml` (1 000 000 par défaut).
+
+`0` est une vraie valeur (tous les Reels), pas « vide ».
+
+```bash
+# vidconsumer : 1 000 000 (son seuil) ; alcr et kujo__o : 100 000 (la commande) ; granny___1 : 250 000 (son seuil)
+python -m autotiktok refresh-index --min-views 100000
+```
+
+Le seuil utilisé est affiché pour chaque compte (`Compte : alcr (seuil : 100000 vues)`) et enregistré dans
+`state/index.json`. Changer le seuil d'un compte déjà listé ne retrouve pas les anciens Reels sous l'ancien seuil :
+relance-le avec `refresh-index --account NOM`.
 
 ---
 
@@ -266,10 +309,10 @@ Réglages de `refresh-index` (et du téléchargement de `post-next`).
 
 | Clé | Défaut | Rôle |
 |---|---|---|
-| `pool_file` | `account_pools.txt` | liste des comptes, un profil par ligne. `#` en début de ligne = commentaire |
+| `pool_file` | `account_pools.json` | liste des comptes, avec un seuil de vues optionnel par compte ([format](#account_poolsjson)) |
 | `cookies_file` | `cookies_browse.txt` | cookies (format Netscape) du compte Instagram **jetable** qui sert à lister. Jamais dans git |
 | `index_file` | `state/index.json` | fichier de la liste des Reels |
-| `min_views` | `1000000` | seuil de vues. Surchargé par `refresh-index --min-views` |
+| `min_views` | `1000000` | seuil de vues **par défaut**. Passe après le seuil d'un compte dans `account_pools.json` et après `refresh-index --min-views` |
 | `max_reels_per_account` | `0` | nombre maximum de Reels lus par compte, des plus récents aux plus anciens. `0` = tous |
 | `request_delay` | `[3, 6]` | pause aléatoire, en secondes, entre deux défilements de la page. Plus c'est long, moins Instagram bloque |
 | `browser_path` | `""` | chemin d'un Chromium. Vide = celui installé par `playwright install chromium` |
@@ -287,7 +330,7 @@ fetch:            # exemple : mises à jour rapides, 150 Reels récents par comp
 
 | Fichier | Contenu | Dans git ? |
 |---|---|---|
-| `account_pools.txt` | comptes Instagram à lister | oui |
+| `account_pools.json` | comptes Instagram à lister, avec leur seuil de vues | oui |
 | `cookies_browse.txt` | cookies du compte jetable, qui sert à lister et à télécharger | **non** |
 | `cookies_upload.txt` | cookies du compte « bestof », sur lequel `post-next` publie | **non** |
 | `legende.txt` | légende reprise à chaque publication de `post-next` | oui |
@@ -307,7 +350,8 @@ fetch:            # exemple : mises à jour rapides, 150 Reels récents par comp
 | `cookies_browse.txt introuvable` | exporte les cookies d'`instagram.com` du compte jetable (extension « cookies.txt ») |
 | `Instagram demande de se connecter : cookies expirés` | la session jetable a expiré : reconnecte-toi sur instagram.com et ré-exporte les cookies |
 | `Instagram limite les requêtes (429)` | trop de requêtes : attends quelques heures, augmente `request_delay`. L'index garde ce qui est déjà trouvé |
-| `X n'est pas dans le pool` | ajoute le compte à `account_pools.txt` avant `--account` |
+| `X n'est pas dans le pool` | ajoute le compte à `account_pools.json` avant `--account` |
+| `account_pools.json : ... min_views doit être un entier...` | le seuil d'un compte doit être un nombre entier positif, `null`, ou absent. Écris `1000000`, pas `"1 million"` |
 | `Aucun nouveau compte à lister` | normal : `--new` n'a rien à faire, tous les comptes sont déjà dans l'index |
 | `Aucun Reel disponible dans l'index` | lance d'abord `refresh-index`, ou tous les Reels de l'index ont déjà été pris |
 | `Configuration incomplète, aucun Reel téléchargé` | `cookies_upload.txt` est absent ou sans `sessionid` (colle-y l'export des cookies du compte d'upload), ou `legende.txt` / la miniature est configuré mais absent |
