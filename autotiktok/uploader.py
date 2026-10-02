@@ -128,6 +128,12 @@ class BrowserUploader:
             if ok.count():
                 ok.first.click()
                 page.wait_for_timeout(1500)
+            # Instagram's web composer crops a video from the computer to a square by default, which cuts off the
+            # top and the bottom of a vertical Reel: ask for the original ratio.
+            page.locator('div[role="dialog"] svg[aria-label="Select crop"]').first.click(timeout=15000)
+            page.wait_for_timeout(1000)
+            page.get_by_text("Original", exact=True).first.click(timeout=15000)
+            page.wait_for_timeout(1500)
             page.get_by_role("button", name="Next").first.click(timeout=20000)  # crop -> edit
             page.wait_for_timeout(4000)
             if cover:
