@@ -46,6 +46,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     post = sub.add_parser("post-next", help="télécharge un Reel de l'index et le publie sur le compte d'upload")
     post.add_argument("--dry-run", action="store_true", help="affiche le Reel choisi, sans rien télécharger ni publier")
+    post.add_argument("--no-delay", action="store_true", help="saute l'attente aléatoire avant la publication")
     sub.add_parser("status", help="affiche la file d'attente et les dernières publications")
     sub.add_parser("keygen", help="génère une clé TOKENS_KEY")
     auth = sub.add_parser("auth", help="connecte un compte (à lancer une fois, sur ton ordinateur)")
@@ -69,7 +70,7 @@ def main(argv: list[str] | None = None) -> int:
                 parser.error("--min-views doit être positif ou nul")
             return refresh_index(root, config, only_new=args.new, account=args.account, min_views=args.min_views)
         if args.command == "post-next":
-            return post_next(root, config, dry_run=args.dry_run)
+            return post_next(root, config, dry_run=args.dry_run, no_delay=args.no_delay)
         if args.command == "status":
             status(root, config)
             return 0

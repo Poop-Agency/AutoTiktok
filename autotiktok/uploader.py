@@ -7,7 +7,10 @@ account (``upload.cookies_file``), the same way the browsing account is read by 
 from __future__ import annotations
 
 import json
+import random
 import re
+import time
+from collections.abc import Callable
 from pathlib import Path
 
 from .fetcher import FETCHED_FILE, FetchError, fetch_next, load_cookies, playwright_cookies
@@ -305,6 +308,9 @@ def post_next(
     *,
     dry_run: bool = False,
     uploader: BrowserUploader | None = None,
+    no_delay: bool = False,
+    sleep: Callable[[float], None] = time.sleep,
+    delay_rng: random.Random | None = None,
     **fetch_kwargs,
 ) -> int:
     """Download a Reel from the index (unless a video is already waiting) and publish it on the upload account."""
@@ -327,10 +333,17 @@ def post_next(
         _log(f"Configuration incomplète, aucun Reel téléchargé : {problem}")
         return 1
 
+    low, high = settings["delay_before"]
+    if not no_delay and high > 0:
+        # A random wait, so that publications do not happen at the same minute every day.
+        wait = (delay_rng or random.SystemRandom()).uniform(low, high)
+        _log(f"Attente aléatoire de {int(wait // 60)} min {int(wait % 60)} s avant de publier.")
+        sleep(wait)
+
     if waiting:
         _log(f"{len(waiting)} vidéo(s) déjà dans input/ : pas de nouveau téléchargement.")
     else:
-        code = fetch_next(root, config, **fetch_kwargs)
+        code = fetch_next(root, config, sleep=sleep, **fetch_kwargs)
         if code != 0:
             return code
         waiting = list_videos(input_dir)

@@ -128,13 +128,14 @@ d'upload (`cookies_upload.txt`). Elle n'utilise ni l'API officielle ni TikTok / 
 utilise `publish-next`.
 
 ```
-python -m autotiktok post-next [--dry-run]
+python -m autotiktok post-next [--dry-run] [--no-delay]
 ```
 
 | Option | Effet |
 |---|---|
-| *(aucune)* | télécharge et publie |
-| `--dry-run` | affiche le Reel qui serait choisi, sans rien télécharger ni publier |
+| *(aucune)* | attend un temps aléatoire (`upload.delay_before`), puis télécharge et publie |
+| `--dry-run` | affiche le Reel qui serait choisi, sans rien télécharger ni publier (et sans attendre) |
+| `--no-delay` | saute l'attente aléatoire : utile pour un essai manuel |
 
 **Exemples**
 
@@ -147,6 +148,7 @@ python -m autotiktok post-next
 ```
 
 **Ce qui se passe, dans l'ordre**
+0. Attend un temps aléatoire entre `upload.delay_before[0]` et `[1]` secondes (1 à 20 minutes dans `config.yaml`), pour que les publications ne tombent pas à la même minute chaque jour.
 1. Vérifie `cookies_upload.txt` (présent, avec un cookie `sessionid`) et, s'ils sont configurés, les fichiers de légende et de miniature. Sinon la commande s'arrête **avant** de
    télécharger : aucun Reel n'est « brûlé ».
 2. Tire un Reel de l'index au hasard, jamais pris (`state/fetched.jsonl`), et le télécharge dans `input/`.
@@ -247,7 +249,7 @@ scripts/deploy.sh --with-cookies   # copie aussi cookies_browse.txt et cookies_u
 - **Copié :** le code, `config.yaml`, `legende.txt`, `account_pools.json`, `assets/`, la documentation et les scripts.
 - **Jamais copié :** `state/` (la liste des Reels, les Reels déjà pris et l'archive vivent sur le serveur), `input/`, `logs/`,
   `.env`, `.venv` et `.git`. Les cookies ne sont copiés qu'avec `--with-cookies`.
-- Le cron du serveur n'est pas modifié : il continue de lancer `scripts/run.sh` à 11:47 et 17:47 UTC.
+- Le cron du serveur n'est pas modifié par ce script : il est dans la crontab du serveur (`crontab -l`).
 - Pour changer la liste des Reels sur le serveur, lance `refresh-index` **sur le serveur** :
   `ssh -i ~/.ssh/id_ed25519 ubuntu@141.253.101.226 'cd AutoTiktok && .venv/bin/python -m autotiktok refresh-index --new'`.
 - Serveur, clé et dossier se règlent avec `AUTOTIKTOK_SERVER`, `AUTOTIKTOK_SSH_KEY` et `AUTOTIKTOK_REMOTE_DIR`.
@@ -323,6 +325,7 @@ Compte sur lequel `post-next` publie (le compte « bestof »).
 | `browser_path` | `""` | chemin d'un Chromium. Vide = celui installé par `playwright install chromium` |
 | `headless` | `true` | `false` affiche le navigateur : utile pour voir une publication bloquée |
 | `share_timeout` | `240` | secondes d'attente maximum pour que le Reel apparaisse sur le profil après « Share » |
+| `delay_before` | `[0, 0]` (`[60, 1200]` dans `config.yaml`) | attente aléatoire `[min, max]`, en secondes, avant chaque publication. `[0, 0]` = pas d'attente |
 
 ### `fetch`
 Réglages de `refresh-index` (et du téléchargement de `post-next`).

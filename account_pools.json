@@ -1,26 +1,26 @@
 [
   {
     "account": "https://www.instagram.com/vidconsumer/",
-    "min_views": null
+    "min_views": 1000000
   },
   {
     "account": "https://www.instagram.com/granny___1/",
-    "min_views": null
+    "min_views": 5000000
   },
   {
     "account": "https://www.instagram.com/alcr/",
-    "min_views": null
+    "min_views": 500000
   },
   {
     "account": "https://www.instagram.com/qweezyreacts/",
-    "min_views": null
+    "min_views": 500000
   },
   {
     "account": "https://www.instagram.com/ra2ri.django/",
-    "min_views": null
+    "min_views": 400000
   },
   {
     "account": "https://www.instagram.com/kujo__o/",
-    "min_views": null
+    "min_views": 3000000
   }
 ]

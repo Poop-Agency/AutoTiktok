@@ -47,6 +47,7 @@ upload:
   browser_path: ""                 # vide = Chromium installé par `playwright install chromium`
   headless: true                   # false : affiche le navigateur
   share_timeout: 240               # secondes d'attente maximum pour que le Reel apparaisse sur le profil
+  delay_before: [60, 1200]         # attente aléatoire [min, max] en secondes avant chaque publication (--no-delay pour la sauter)
 
 # Reels des comptes du pool (comptes à toi ou autorisés uniquement).
 # `refresh-index` liste leurs Reels populaires, `post-next` en télécharge un et le publie.

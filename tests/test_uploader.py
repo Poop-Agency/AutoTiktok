@@ -1,4 +1,5 @@
 import json
+import random
 
 import pytest
 
@@ -236,3 +237,47 @@ def test_share_confirmed():
     assert uploader.share_confirmed("Your reel has been shared.")
     assert not uploader.share_confirmed("Sharing")
     assert not uploader.share_confirmed("Your post couldn't be shared")  # failure text is checked first anyway
+
+
+class Waits:
+    def __init__(self):
+        self.seconds = []
+
+    def __call__(self, seconds):
+        self.seconds.append(seconds)
+
+
+def test_post_next_waits_a_random_time_before_publishing(project, config):
+    config["upload"]["delay_before"] = [60, 1200]
+    waits, fake = Waits(), FakeUploader()
+    assert run(project, config, fake, [], sleep=waits, delay_rng=random.Random(1)) == 0
+    assert len(waits.seconds) == 1 and 60 <= waits.seconds[0] <= 1200
+    assert len(fake.uploads) == 1
+
+
+def test_post_next_no_delay_skips_the_wait(project, config):
+    config["upload"]["delay_before"] = [60, 1200]
+    waits = Waits()
+    assert run(project, config, FakeUploader(), [], sleep=waits, no_delay=True) == 0
+    assert waits.seconds == []
+
+
+def test_post_next_dry_run_never_waits(project, config):
+    config["upload"]["delay_before"] = [60, 1200]
+    waits = Waits()
+    assert run(project, config, FakeUploader(), [], sleep=waits, dry_run=True) == 0
+    assert waits.seconds == []
+
+
+def test_post_next_delay_is_off_by_default(project, config):
+    waits = Waits()
+    assert run(project, config, FakeUploader(), [], sleep=waits) == 0
+    assert waits.seconds == []
+
+
+def test_post_next_does_not_wait_when_the_upload_account_is_not_ready(project, config):
+    (project / "cookies_upload.txt").write_text("# Netscape HTTP Cookie File\n", encoding="utf-8")
+    config["upload"]["delay_before"] = [60, 1200]
+    waits = Waits()
+    assert run(project, config, FakeUploader(), [], sleep=waits) == 1
+    assert waits.seconds == []

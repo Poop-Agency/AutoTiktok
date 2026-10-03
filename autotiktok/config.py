@@ -42,6 +42,7 @@ DEFAULTS: dict = {
         "browser_path": "",
         "headless": True,
         "share_timeout": 240,
+        "delay_before": [0, 0],
     },
     "fetch": {
         "pool_file": "account_pools.json",
@@ -92,6 +93,14 @@ def load_config(path: Path) -> dict:
             raise ConfigError(f"fetch.{key} doit être un entier positif ou nul.")
     if not isinstance(config["upload"]["share_timeout"], int | float) or config["upload"]["share_timeout"] <= 0:
         raise ConfigError("upload.share_timeout doit être un nombre de secondes positif.")
+    delay_before = config["upload"]["delay_before"]
+    if not (
+        isinstance(delay_before, list)
+        and len(delay_before) == 2
+        and all(isinstance(v, int | float) for v in delay_before)
+        and 0 <= delay_before[0] <= delay_before[1]
+    ):
+        raise ConfigError("upload.delay_before doit être [min, max] en secondes, par exemple [60, 1200].")
     delay = fetch["request_delay"]
     if not (isinstance(delay, list) and len(delay) == 2 and 0 <= delay[0] <= delay[1]):
         raise ConfigError("fetch.request_delay doit être [min, max] en secondes, par exemple [3, 6].")
